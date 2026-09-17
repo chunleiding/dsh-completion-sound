@@ -4,7 +4,7 @@
  * writer (guarded by a monotonic revision so a stale adoption can't regress
  * the section); the section component reads via props.useStore.
  */
-import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-runtime/client'
+import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
 import { DEFAULT_LONG_TASK_MINUTES, type CompletionSoundSettings } from '../settings.ts'
 
 /** Store state mirrored from the optimistic settings snapshot. */

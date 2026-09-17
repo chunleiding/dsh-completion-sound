@@ -1,4 +1,4 @@
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
+import type { Context as ClientContext } from '@deepseek-ai/cordis';
 import { type CompletionSoundKey } from './locales.ts';
 export type { CompletionSoundSectionComponentProps, CompletionSoundSectionInjected } from './CompletionSoundSection.tsx';
 export type { CompletionSoundSectionState } from './settings-store.ts';
