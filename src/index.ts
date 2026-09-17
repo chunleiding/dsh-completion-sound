@@ -16,7 +16,7 @@ import { dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { settingsNamespace, type SettingsScope } from '@deepseek-ai/dsh-settings'
+import { type SettingsNamespace, type SettingsScope } from '@deepseek-ai/dsh-settings'
 // Type-only: pulls the webServer Context merge (ctx.webServer).
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import {
@@ -252,7 +252,10 @@ export function apply(ctx: Context): void {
   let settings: SettingsScope<CompletionSoundSettings> | null = null
   ctx.inject(['settings'], (settingsCtx) => {
     settings = settingsCtx.settings.register(
-      settingsNamespace(COMPLETION_SOUND_SETTINGS_NAMESPACE),
+      // `settingsNamespace` was dropped from dsh-settings after the 0.1.0 line;
+      // the brand is phantom at runtime and `register` validates the identifier
+      // itself, so a cast keeps this working on both lines.
+      COMPLETION_SOUND_SETTINGS_NAMESPACE as SettingsNamespace,
       CompletionSoundSettingsSchema,
     )
   })

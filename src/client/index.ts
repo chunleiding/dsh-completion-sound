@@ -15,6 +15,12 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+// Type-only: pulls the renderer's Context merge (ctx.slots). The retired
+// dsh-client-runtime used to re-export a merged `ClientContext` that carried
+// this; the client context now composes from the owning packages directly.
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// Type-only: pulls the session controller's Context merge (ctx.sessions).
+import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import {
   COMPLETION_SOUND_SETTINGS_NAMESPACE, DEFAULT_LONG_TASK_MINUTES,
   type CompletionSoundSettings,
