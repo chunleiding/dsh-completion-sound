@@ -32,6 +32,7 @@ import { en, zh, NS, type CompletionSoundKey } from './locales.ts'
 import { notifyCompletion, requestNotificationPermission, testNotification } from './notify.ts'
 import { playCompletionChime, playSpecialSound, stopSpecialSound, unlockAudio } from './sound.ts'
 import { closeStopModal, showStopModal } from './stop-modal.tsx'
+import { SingleTabCoordinator } from './single-tab.ts'
 
 export type { CompletionSoundSectionComponentProps, CompletionSoundSectionInjected } from './CompletionSoundSection.tsx'
 export type { CompletionSoundSectionState } from './settings-store.ts'
@@ -90,6 +91,17 @@ export function apply(ctx: ClientContext): void {
   }
 
   const t = ctx.locale.bind(NS)
+
+  // Elect a single leader tab so a completion cue (and its stop modal) plays
+  // exactly once even when DSH is open in several browser tabs/windows. Only
+  // the leader reacts to the completion watch below; every other tab stays
+  // silent. Without cross-tab storage (private mode, embedded viewers) the
+  // coordinator defaults to "leader", so cues still play on the single page.
+  const coordinator = new SingleTabCoordinator()
+  ctx.effect(() => {
+    coordinator.start()
+    return () => coordinator.stop()
+  }, 'ui-completion-sound: single-tab leader election')
 
   /**
    * Start the special long-task cue and mount a dismissable overlay whose click
@@ -161,6 +173,10 @@ export function apply(ctx: ClientContext): void {
     running.clear()
     for (const [id, startedAt] of next) running.set(id, startedAt)
     if (finished.length === 0) return
+    // Only the elected leader tab actually plays the cue; the others observed
+    // the same transition but must stay silent to avoid duplicate buzzes and
+    // modals across open DSH pages for one completion.
+    if (!coordinator.isLeader()) return
     const title = finished.map(f => f.title).join(', ')
     if (settings.enabled) {
       const longTask = finished.some(f => f.elapsedMs >= longTaskMs(settings))

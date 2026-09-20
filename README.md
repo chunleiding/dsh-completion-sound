@@ -41,6 +41,7 @@ The `dsh-web-app` bundle ships a built-in completion-sound row (`ui-completion-s
 - **Bundled audio**: defaults to the bundled "Guan Yu's Song" (`assets/guan-yu.wav`, ~13.5 MB)
 - **Configurable long-task threshold**: 1 minute ~ 10080 minutes (7 days)
 - **Desktop notification**: optional, cross-platform — browser notification first, automatic fallback to a system notification (macOS `osascript` / Linux `notify-send`)
+- **Single cue across tabs**: when DSH is open in several browser tabs/windows, the open tabs elect one leader tab so each completion chimes and shows its modal exactly once — no duplicate buzzes to dismiss separately
 - **Dedicated settings page**: everything lives under "Settings → Completion sound"
 
 ## Settings
