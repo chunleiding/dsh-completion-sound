@@ -2,7 +2,7 @@
 
 A DSH (DeepSeek Harness) completion-sound bundle: plays a chime when an agent turn finishes; plays the special "Guan Yu's Song" music and shows a click-to-stop modal when a long task (≥ 10 minutes by default) finishes; optionally fires a desktop notification (browser notification first, with an automatic fallback to a system notification); and raises a separate "I need you" alert when a question / plan-review / approval card is waiting for your answer.
 
-> Package: `@jensentsts/dsh-completion-sound` · Version: `0.3.0` · License: MIT
+> Package: `@jensentsts/dsh-completion-sound` · Version: `0.4.0` · License: MIT
 
 [English](README.md) | [中文](README.zh.md)
 
@@ -37,6 +37,8 @@ The `dsh-web-app` bundle ships a built-in completion-sound row (`ui-completion-s
 
 - **Completion chime**: a WebAudio-synthesized two-tone chime (E5 → A5) when a turn finishes
 - **Answer-needed alert**: when an `ask_user_question`, plan-review, or approval card waits for you, a rising three-note cue (D5 → A5 → D6) plays and a notification is raised — its own switch, independent of the completion cues
+- **Persistent nag**: while a card stays unanswered, keep alerting on the configured interval (0 alerts once); **answering it stops the cue instantly**, and switching the alert off mid-wait tears down the running loop
+- **Custom nag audio**: point the answer-needed cue at your own audio file, or a directory (one random track per alert); empty or unusable falls back to the synthesized three-note cue, never to the long-task fanfare
 - **Long-task special music**: plays special music and shows a modal when a long task finishes; click anywhere to stop
 - **Custom special music**: point at a single audio file, or a directory (one random track is picked per play)
 - **Bundled audio**: defaults to the bundled "Guan Yu's Song" (`assets/guan-yu.wav`, ~13.5 MB)
@@ -56,6 +58,8 @@ The `dsh-web-app` bundle ships a built-in completion-sound row (`ui-completion-s
 | `special` | play special music on long-task completion | `true` | — |
 | `specialPath` | special-music file/directory path (empty = bundled Guan Yu's Song) | `""` | — |
 | `askAlert` | alert when a card awaits your answer (chime + notification) | `true` | — |
+| `askRepeatMinutes` | re-alert interval while unanswered (minutes, 0 = no repeat) | `3` | 0–1440 |
+| `askPath` | answer-needed audio file/directory (empty = synthesized cue) | `""` | — |
 
 ## Special music semantics
 
@@ -112,6 +116,7 @@ This plugin is a **DSH bundle**: `package.json`'s `dsh.bundle.patch` points at `
   - `/completion-sound/guan-yu.wav` — bundled Guan Yu's Song (memory-cached, served as `audio/wav`)
   - `/completion-sound/special` — serves special music by `specialPath` (empty→bundled; file→served; directory→one random pick, with header `x-dsh-completion-sound-random: 1`)
   - `/completion-sound/notify` — POST system-notification fallback (macOS `osascript` / Linux `notify-send`) for when browser notifications are unavailable
+  - `/completion-sound/ask` — serves the answer-needed cue by `askPath` (file→served; directory→one random pick); **404** when empty or unusable so the browser falls back to its synthesized cue
 - **Client half** (`src/client/index.ts`): binds settings, watches turn-completion events, registers the `settings.section` (id `completion-sound`) dedicated page, and watches for cards waiting on you.
   - The answer-needed watch: `ctx.uiSession.pendingInteractions` is DSH's single registry of "cards waiting on the user" (the question,
 plan-review and approval domains all publish into it), a snapshot source holding the one effective card per session. The plugin diffs both a
@@ -119,6 +124,8 @@ newly appearing session and a session whose card was replaced by a newer request
 never re-alerts a card that was already open. It attaches via `ctx.inject(['uiSession'], …)`, so a profile without the Session UI degrades
 quietly and completion sounds keep working.
   - Why a separate watch: while a card is open the turn is still `running`, so the completion watch never fires — "waiting for you" has to be picked up on its own.
+  - One record per session (request key, whether it was an approval, and its next re-alert timer) is the single source of truth that announcing, repeating, and stopping all read: a card that is answered, cancelled, or replaced retires its own state first, so the loop can never outlive the question and one card can never stack two timers. The interval is read at arm time, so setting it to 0 or switching the alert off goes quiet before the next firing.
+- **Two independent playback slots**: the answer-needed cue and the long-task fanfare each own one, so silencing the nag the instant you answer never cuts off a celebration still playing in the same page. `/completion-sound/ask` returns **404** for an empty or unusable selection (where `/special` falls back to the bundled sample), which is how the browser knows to keep its synthesized cue.
 
 ## Building
 

@@ -23,11 +23,12 @@ import {
   COMPLETION_SOUND_ENABLED_FIELD, COMPLETION_SOUND_LONG_TASK_MINUTES_FIELD,
   COMPLETION_SOUND_NOTIFY_FIELD, COMPLETION_SOUND_NOTIFY_URL,
   COMPLETION_SOUND_SETTINGS_NAMESPACE,
-  COMPLETION_SOUND_ASK_ALERT_FIELD, COMPLETION_SOUND_SPECIAL_FIELD,
-  COMPLETION_SOUND_SPECIAL_PATH_FIELD, COMPLETION_SOUND_VOLUME_FIELD,
-  DEFAULT_LONG_TASK_MINUTES, DEFAULT_VOLUME,
-  GUAN_YU_SOUND_URL, MAX_LONG_TASK_MINUTES, MIN_LONG_TASK_MINUTES,
-  SPECIAL_SOUND_URL, type CompletionSoundSettings,
+  COMPLETION_SOUND_ASK_ALERT_FIELD, COMPLETION_SOUND_ASK_PATH_FIELD, COMPLETION_SOUND_ASK_REPEAT_FIELD,
+  COMPLETION_SOUND_SPECIAL_FIELD, COMPLETION_SOUND_SPECIAL_PATH_FIELD, COMPLETION_SOUND_VOLUME_FIELD,
+  DEFAULT_ASK_REPEAT_MINUTES, DEFAULT_LONG_TASK_MINUTES, DEFAULT_VOLUME,
+  GUAN_YU_SOUND_URL, MAX_ASK_REPEAT_MINUTES, MAX_LONG_TASK_MINUTES,
+  MIN_ASK_REPEAT_MINUTES, MIN_LONG_TASK_MINUTES, SPECIAL_SOUND_URL, ASK_SOUND_URL,
+  type CompletionSoundSettings,
 } from './settings.ts'
 
 export {
@@ -37,8 +38,9 @@ export {
   COMPLETION_SOUND_ASK_ALERT_FIELD, COMPLETION_SOUND_SPECIAL_FIELD,
   COMPLETION_SOUND_SPECIAL_PATH_FIELD, COMPLETION_SOUND_VOLUME_FIELD,
   DEFAULT_LONG_TASK_MINUTES, DEFAULT_VOLUME,
-  GUAN_YU_SOUND_URL, MAX_LONG_TASK_MINUTES, MIN_LONG_TASK_MINUTES,
-  SPECIAL_SOUND_URL, type CompletionSoundSettings,
+  DEFAULT_ASK_REPEAT_MINUTES, GUAN_YU_SOUND_URL, MAX_ASK_REPEAT_MINUTES, MAX_LONG_TASK_MINUTES,
+  MIN_ASK_REPEAT_MINUTES, MIN_LONG_TASK_MINUTES, SPECIAL_SOUND_URL, ASK_SOUND_URL,
+  type CompletionSoundSettings,
 } from './settings.ts'
 
 /** Durable completion-sound schema; also the wire envelope the browser scope validates against. */
@@ -53,6 +55,11 @@ const CompletionSoundSettingsSchema: z<CompletionSoundSettings> = z.object({
   [COMPLETION_SOUND_SPECIAL_FIELD]: z.boolean().default(true),
   [COMPLETION_SOUND_SPECIAL_PATH_FIELD]: z.string().default(''),
   [COMPLETION_SOUND_ASK_ALERT_FIELD]: z.boolean().default(true),
+  [COMPLETION_SOUND_ASK_REPEAT_FIELD]: z.number()
+    .min(MIN_ASK_REPEAT_MINUTES)
+    .max(MAX_ASK_REPEAT_MINUTES)
+    .default(DEFAULT_ASK_REPEAT_MINUTES),
+  [COMPLETION_SOUND_ASK_PATH_FIELD]: z.string().default(''),
 })
 
 /**
@@ -106,9 +113,8 @@ const serveGuanYu = async (req: IncomingMessage, res: ServerResponse): Promise<v
     return
   }
   try {
-    const body = guanYuBuffer ?? await readFile(GUAN_YU_ASSET_PATH)
-    guanYuBuffer = body
-    serveBody(req, res, body, 'audio/wav', false)
+    const { body, contentType } = await bundledCue()
+    serveBody(req, res, body, contentType, false)
   } catch {
     // Asset missing from the published files: a loud 404 beats the silent SPA-fallback HTML page.
     res.writeHead(404)
@@ -138,33 +144,42 @@ async function collectAudioFiles(dir: string): Promise<string[]> {
   return found
 }
 
+/** One resolved audio cue: the bytes to serve plus how they were picked. */
+interface ResolvedCue { body: Uint8Array, contentType: string, random: boolean }
+
 /**
- * Resolve the user-selected special cue to concrete bytes: empty selects the
- * bundled sample, a file serves itself, a directory serves one random audio
- * file within it. Any unusable selection (missing path, no audio files,
- * non-audio file) falls back to the bundled sample.
+ * Resolve a user-selected cue to concrete bytes: a file serves itself, a
+ * directory serves one random audio file within it. Returns null for an empty
+ * or unusable selection (missing path, no audio files, non-audio file) and
+ * leaves the caller to pick the fallback — the long-task route serves the
+ * bundled sample, while the answer-needed route lets the browser fall back to
+ * its own synthesized cue.
  */
-async function resolveSpecialCue(specialPath: string): Promise<{ body: Uint8Array, contentType: string, random: boolean }> {
-  if (specialPath !== '') {
-    try {
-      const target = resolve(specialPath)
-      const info = await stat(target)
-      if (info.isFile()) {
-        const contentType = audioContentType(target)
-        if (contentType !== undefined) {
-          return { body: await readFile(target), contentType, random: false }
-        }
-      } else if (info.isDirectory()) {
-        const files = await collectAudioFiles(target)
-        if (files.length > 0) {
-          const picked = files[Math.floor(Math.random() * files.length)]!
-          return { body: await readFile(picked), contentType: audioContentType(picked) ?? 'audio/wav', random: true }
-        }
-      }
-    } catch {
-      // Unreadable/missing selection: fall through to the bundled cue.
+async function resolveCueSelection(path: string): Promise<ResolvedCue | null> {
+  if (path === '') return null
+  try {
+    const target = resolve(path)
+    const info = await stat(target)
+    if (info.isFile()) {
+      const contentType = audioContentType(target)
+      if (contentType !== undefined) return { body: await readFile(target), contentType, random: false }
+      return null
     }
+    if (info.isDirectory()) {
+      const files = await collectAudioFiles(target)
+      if (files.length > 0) {
+        const picked = files[Math.floor(Math.random() * files.length)]!
+        return { body: await readFile(picked), contentType: audioContentType(picked) ?? 'audio/wav', random: true }
+      }
+    }
+  } catch {
+    // Unreadable or missing selection: the caller's fallback decides.
   }
+  return null
+}
+
+/** Read the bundled long-task cue, caching its bytes after the first success. */
+async function bundledCue(): Promise<ResolvedCue> {
   const body = guanYuBuffer ?? await readFile(GUAN_YU_ASSET_PATH)
   guanYuBuffer = body
   return { body, contentType: 'audio/wav', random: false }
@@ -267,24 +282,45 @@ export function apply(ctx: Context): void {
       () => webCtx.webServer.register({ kind: 'exact', path: GUAN_YU_SOUND_URL, handler: serveGuanYu }),
       'ui-completion-sound: long-task cue asset route',
     )
-    const serveSpecial = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    // One GET/HEAD resolver over a user-selected cue path. `bundledFallback`
+    // decides what an empty or unusable selection means: the long-task cue falls
+    // back to the bundled sample so a completion never loses its music, while
+    // the answer-needed cue 404s so the browser plays its synthesized chime
+    // instead of a triumphant fanfare that does not fit "answer me".
+    const cueRoute = (select: (values: CompletionSoundSettings) => string, bundledFallback: boolean) => async (
+      req: IncomingMessage,
+      res: ServerResponse,
+    ): Promise<void> => {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         res.writeHead(405)
         res.end()
         return
       }
       try {
-        const specialPath = settings?.get()[COMPLETION_SOUND_SPECIAL_PATH_FIELD] ?? ''
-        const { body, contentType, random } = await resolveSpecialCue(specialPath)
-        serveBody(req, res, body, contentType, random)
+        const picked = await resolveCueSelection(settings === null ? '' : select(settings.get()))
+        if (picked !== null) {
+          serveBody(req, res, picked.body, picked.contentType, picked.random)
+          return
+        }
+        if (!bundledFallback) {
+          res.writeHead(404)
+          res.end()
+          return
+        }
+        const fallback = await bundledCue()
+        serveBody(req, res, fallback.body, fallback.contentType, false)
       } catch {
         res.writeHead(404)
         res.end()
       }
     }
     webCtx.effect(
-      () => webCtx.webServer.register({ kind: 'exact', path: SPECIAL_SOUND_URL, handler: serveSpecial }),
+      () => webCtx.webServer.register({ kind: 'exact', path: SPECIAL_SOUND_URL, handler: cueRoute(values => values[COMPLETION_SOUND_SPECIAL_PATH_FIELD], true) }),
       'ui-completion-sound: special-cue resolver route',
+    )
+    webCtx.effect(
+      () => webCtx.webServer.register({ kind: 'exact', path: ASK_SOUND_URL, handler: cueRoute(values => values[COMPLETION_SOUND_ASK_PATH_FIELD], false) }),
+      'ui-completion-sound: answer-needed cue route',
     )
     webCtx.effect(
       () => webCtx.webServer.register({ kind: 'exact', path: COMPLETION_SOUND_NOTIFY_URL, handler: serveNotify }),

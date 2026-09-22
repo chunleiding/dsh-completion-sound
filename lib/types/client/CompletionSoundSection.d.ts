@@ -17,10 +17,14 @@ export interface CompletionSoundSectionInjected {
     setSpecialPath: (value: string) => void;
     /** Toggle the answer-needed alert (attention chime + notification). */
     setAskAlert: (value: boolean) => void;
+    /** Set the answer-needed re-alert interval in minutes (0 = alert once). */
+    setAskRepeatMinutes: (value: number) => void;
+    /** Set the answer-needed audio file/directory ('' = synthesized cue). */
+    setAskPath: (value: string) => void;
     /** Preview the short chime at the given gain. */
     previewChime: (volume: number) => void;
-    /** Preview the answer-needed alert chime at the given gain. */
-    previewAsk: (volume: number) => void;
+    /** Preview the answer-needed cue at the given gain and selection. */
+    previewAsk: (volume: number, askPath: string) => void;
     /** Preview the special cue at the given gain (mounts a stop overlay). */
     previewSpecial: (volume: number, specialPath: string) => void;
     /** Fire a sample desktop notification, resolving to the permission outcome. */

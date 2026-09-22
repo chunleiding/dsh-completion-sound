@@ -22,10 +22,13 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: pulls the session controller's Context merge (ctx.sessions).
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the Session UI's Context merge (ctx.uiSession), whose
-// pendingInteractions source is the roster of cards waiting on the user.
+// pendingInteractions source is the roster of cards waiting on the user. The
+// branded Session id key type is derived off that snapshot face rather than
+// imported from the Session package, so this bundle names no extra dependency.
+import type { SessionPendingInteractionSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import {
-  COMPLETION_SOUND_SETTINGS_NAMESPACE, DEFAULT_LONG_TASK_MINUTES,
+  COMPLETION_SOUND_SETTINGS_NAMESPACE, DEFAULT_ASK_REPEAT_MINUTES, DEFAULT_LONG_TASK_MINUTES,
   type CompletionSoundSettings,
 } from '../settings.ts'
 import type { CompletionSoundSectionInjected } from './CompletionSoundSection.tsx'
@@ -34,7 +37,8 @@ import { createCompletionSoundSectionStore } from './settings-store.ts'
 import { en, zh, NS, type CompletionSoundKey } from './locales.ts'
 import { notifyCompletion, requestNotificationPermission, testNotification } from './notify.ts'
 import {
-  playAttentionChime, playCompletionChime, playSpecialSound, stopSpecialSound, unlockAudio,
+  playAskSound, playAttentionChime, playCompletionChime, playSpecialSound,
+  stopAskSound, stopSpecialSound, unlockAudio,
 } from './sound.ts'
 import { closeStopModal, showStopModal } from './stop-modal.tsx'
 import { SingleTabCoordinator } from './single-tab.ts'
@@ -66,6 +70,8 @@ const DEFAULT_SETTINGS: CompletionSoundSettings = Object.freeze({
   special: true,
   specialPath: '',
   askAlert: true,
+  askRepeatMinutes: DEFAULT_ASK_REPEAT_MINUTES,
+  askPath: '',
 })
 
 /** Turn duration (ms) that earns the long-task cue instead of the short chime. */
@@ -201,41 +207,129 @@ export function apply(ctx: ClientContext): void {
   // prompt blocks the turn until the user answers, and the session stays
   // `running` the whole time — so the completion watch above is silent for it.
   // The Session pending-interaction source is the roster of exactly those cards
-  // (one effective entry per session), so diff it by request key: a session
-  // appearing, or one whose key changed, is a fresh card. Seeded from the
-  // current snapshot so a card already on screen across a page or plugin
-  // reload does not cue twice. Read through an optional inject: a profile
-  // without the Session UI keeps the completion cue and only loses this one.
+  // (one effective entry per session), so this is the only place that can see
+  // them. `awaiting` is the single record of what has been announced per
+  // session — its request key, its kind, and its pending re-alert timer — so
+  // announcing, repeating, and stopping all read one truth instead of racing a
+  // second dedupe map. Read through an optional inject: a profile without the
+  // Session UI keeps the completion cue and only loses this one.
   ctx.inject(['uiSession'], (sessionCtx) => {
-    // Session id → the request key last observed for it.
-    let seen = new Map<string, string>()
-    const prime = (): Map<string, string> => {
-      const next = new Map<string, string>()
-      for (const [id, interaction] of sessionCtx.uiSession.pendingInteractions.getSnapshot()) {
-        next.set(id, interaction.key)
-      }
-      return next
+    type PendingId = Parameters<SessionPendingInteractionSnapshot['get']>[0]
+    /** Per-session announcement state, keyed by Session id. */
+    interface Awaiting {
+      /** Request key last announced for this session. */
+      key: string
+      /** Whether the card was an approval (picks the notification copy). */
+      approving: boolean
+      /** Pending re-alert timer, or null when repeating is off or unanswered-quiet. */
+      timer: ReturnType<typeof setTimeout> | null
     }
-    seen = prime()
-    sessionCtx.effect(() => sessionCtx.uiSession.pendingInteractions.subscribe(() => {
-      const previous = seen
-      seen = prime()
-      const list = ctx.sessions.list.getSnapshot()
-      const arrivals: { title: string, approving: boolean }[] = []
-      for (const [id, interaction] of sessionCtx.uiSession.pendingInteractions.getSnapshot()) {
-        if (previous.get(id) === interaction.key) continue
-        arrivals.push({ title: list.byId[id]?.displayTitle ?? id, approving: interaction.kind === 'approval' })
+    const awaiting = new Map<PendingId, Awaiting>()
+
+    /** Play the answer-needed cue: the selected file when usable, else the synthesized chime. */
+    const playAskCue = (): void => {
+      const volume = settings.volume
+      if (settings.askPath === '') {
+        void playAttentionChime(volume)
+        return
       }
-      if (arrivals.length === 0 || !settings.askAlert) return
+      // A long nag must not outlive the question: the slot is stopped on answer.
+      // An empty or broken selection 404s through the ask route, so fall back to
+      // the synthesized cue rather than lose the alert entirely.
+      void playAskSound(volume, settings.askPath).then((started) => {
+        if (!started) void playAttentionChime(volume)
+      })
+    }
+
+    /** Raise one alert — cue plus notification — for the given waiting sessions. */
+    const announce = (ids: PendingId[], repeated: boolean): void => {
+      if (ids.length === 0 || !settings.askAlert) return
       // Same leader election as the completion cue: one alert per card, not one
       // per open DSH page.
       if (!coordinator.isLeader()) return
-      void playAttentionChime(settings.volume)
-      const title = arrivals.map(a => a.title).join(', ')
-      void notifyCompletion(t(arrivals.some(a => a.approving)
-        ? 'completion-sound.askedApproval'
-        : 'completion-sound.asked'), title)
-    }), 'ui-completion-sound: answer-needed watch')
+      const list = ctx.sessions.list.getSnapshot()
+      const titles = ids.map(id => list.byId[id]?.displayTitle ?? id).join(', ')
+      const approving = ids.some(id => awaiting.get(id)?.approving ?? false)
+      const titleKey = approving
+        ? (repeated ? 'completion-sound.askedApprovalAgain' : 'completion-sound.askedApproval')
+        : (repeated ? 'completion-sound.askedAgain' : 'completion-sound.asked')
+      playAskCue()
+      void notifyCompletion(t(titleKey), titles)
+    }
+
+    /** (Re)arm the re-alert timer for one session, if repeating is switched on. */
+    const armRepeat = (id: PendingId): void => {
+      const entry = awaiting.get(id)
+      if (entry === undefined) return
+      if (entry.timer !== null) clearTimeout(entry.timer)
+      entry.timer = null
+      // Read the interval at arm time, so turning repeating off stops the loop at
+      // the next firing without touching any already-open card.
+      if (settings.askRepeatMinutes <= 0) return
+      entry.timer = setTimeout(() => {
+        entry.timer = null
+        const snapshot = sessionCtx.uiSession.pendingInteractions.getSnapshot()
+        const interaction = snapshot.get(id)
+        // The card may have been answered, replaced, or handed to another tab in
+        // the meantime; only a still-open card with the same key keeps nagging.
+        if (interaction === undefined || interaction.key !== entry.key) return
+        announce([id], true)
+        armRepeat(id)
+      }, settings.askRepeatMinutes * 60_000)
+    }
+
+    /** Drop one session's announcement entirely (answered, cancelled, or replaced). */
+    const retire = (id: PendingId): void => {
+      const entry = awaiting.get(id)
+      if (entry === undefined) return
+      if (entry.timer !== null) clearTimeout(entry.timer)
+      awaiting.delete(id)
+      // Silence a long nag once nothing is outstanding any more. Answering one of
+      // several open cards leaves the others still asking, so the cue keeps going.
+      if (awaiting.size === 0) stopAskSound()
+    }
+
+    const observe = (): void => {
+      const snapshot = sessionCtx.uiSession.pendingInteractions.getSnapshot()
+      // Retire anything no longer outstanding, or superseded by a newer request,
+      // before deciding what is new — so a replaced card stops its old nag and is
+      // then announced afresh, rather than stacking a second timer on it.
+      for (const [id, entry] of [...awaiting]) {
+        const interaction = snapshot.get(id)
+        if (interaction === undefined || interaction.key !== entry.key) retire(id)
+      }
+      const arrivals: PendingId[] = []
+      for (const [id, interaction] of snapshot) {
+        if (awaiting.has(id)) continue
+        awaiting.set(id, {
+          key: interaction.key,
+          approving: interaction.kind === 'approval',
+          timer: null,
+        })
+        arrivals.push(id)
+      }
+      if (!settings.askAlert) {
+        // Switching the alert off mid-wait must silence the loop, not leave timers
+        // running to fire after the user opted out.
+        for (const id of [...awaiting.keys()]) retire(id)
+        return
+      }
+      announce(arrivals, false)
+      for (const id of arrivals) armRepeat(id)
+    }
+
+    // A card already on screen when this page (or plugin) starts was announced by
+    // whoever was alive when it appeared: record it so a reload never re-alerts.
+    for (const [id, interaction] of sessionCtx.uiSession.pendingInteractions.getSnapshot()) {
+      awaiting.set(id, { key: interaction.key, approving: interaction.kind === 'approval', timer: null })
+    }
+    sessionCtx.effect(() => {
+      const unsubscribe = sessionCtx.uiSession.pendingInteractions.subscribe(observe)
+      return () => {
+        unsubscribe()
+        for (const id of [...awaiting.keys()]) retire(id)
+      }
+    }, 'ui-completion-sound: answer-needed watch')
   })
 
   // Settings section. The injected face drives the store through the optimistic
@@ -258,8 +352,15 @@ export function apply(ctx: ClientContext): void {
         if (value) requestNotificationPermission()
         write('askAlert', value)
       },
+      setAskRepeatMinutes: (value) => { write('askRepeatMinutes', value) },
+      setAskPath: (value) => { write('askPath', value) },
       previewChime: (volume) => { void playCompletionChime(volume) },
-      previewAsk: (volume) => { void playAttentionChime(volume) },
+      previewAsk: (volume, askPath) => {
+        if (askPath === '') { void playAttentionChime(volume); return }
+        void playAskSound(volume, askPath).then((started) => {
+          if (!started) void playAttentionChime(volume)
+        })
+      },
       previewSpecial: (volume, specialPath) => { playSpecialWithStop(volume, specialPath) },
       testNotify: () => testNotification(t('completion-sound.notified'), t('completion-sound.notifyTestBody')),
     }

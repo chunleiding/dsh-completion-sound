@@ -22,6 +22,10 @@ export interface CompletionSoundSectionState {
     specialPath: string;
     /** Raise the answer-needed alert (attention chime + desktop notification). */
     askAlert: boolean;
+    /** Re-alert every this many minutes while a card stays unanswered; 0 = once. */
+    askRepeatMinutes: number;
+    /** Answer-needed audio file/directory ('' = synthesized cue). */
+    askPath: string;
     /** A value has been published (defaults or adopted durable section). */
     ready: boolean;
     /** Monotonic guard: drops stale publishes and duplicate adoptions. */

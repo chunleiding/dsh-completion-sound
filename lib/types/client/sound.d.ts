@@ -14,16 +14,27 @@ export declare function playCompletionChime(volume: number): Promise<void>;
  */
 export declare function playAttentionChime(volume: number): Promise<void>;
 /**
- * Stop the special cue immediately (no-op when it is not playing). Also
- * cancels any in-flight load that would otherwise start after the stop.
- */
-export declare function stopSpecialSound(): void;
-/**
- * Play the special long-task cue at the given gain, resolving `specialPath`
- * ('' = bundled sample) through the host.
+ * Play the special long-task cue, resolving `specialPath` ('' = bundled
+ * sample) through the host.
  * @param volume - playback gain, 0..1; values ≤ 0 are silently skipped.
  * @param specialPath - the durable `specialPath` setting selecting the cue source.
  * @returns true when playback actually started, false when skipped/stopped/failed.
  */
 export declare function playSpecialSound(volume: number, specialPath: string): Promise<boolean>;
+/** Stop the special long-task cue immediately (no-op when it is not playing). */
+export declare function stopSpecialSound(): void;
+/**
+ * Play the answer-needed file cue, resolving `askPath` through the host. An
+ * empty or unusable selection 404s here, which the caller reads as "fall back
+ * to the synthesized cue".
+ * @param volume - playback gain, 0..1; values ≤ 0 are silently skipped.
+ * @param askPath - the durable `askPath` setting selecting the cue source.
+ * @returns true when playback actually started, false when skipped/stopped/failed.
+ */
+export declare function playAskSound(volume: number, askPath: string): Promise<boolean>;
+/**
+ * Stop the answer-needed cue immediately. Called the moment the card is
+ * answered, so a long nag never outlives the question it was asking.
+ */
+export declare function stopAskSound(): void;
 //# sourceMappingURL=sound.d.ts.map

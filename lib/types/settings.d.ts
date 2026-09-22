@@ -20,6 +20,10 @@ export declare const COMPLETION_SOUND_SPECIAL_FIELD = "special";
 export declare const COMPLETION_SOUND_SPECIAL_PATH_FIELD = "specialPath";
 /** Field carrying the answer-needed alert switch. */
 export declare const COMPLETION_SOUND_ASK_ALERT_FIELD = "askAlert";
+/** Field carrying the repeat-interval for the answer-needed alert (0 = no repeat). */
+export declare const COMPLETION_SOUND_ASK_REPEAT_FIELD = "askRepeatMinutes";
+/** Field carrying the optional answer-needed audio file/directory ('' = synthesized cue). */
+export declare const COMPLETION_SOUND_ASK_PATH_FIELD = "askPath";
 /** Default playback gain (0..1) when the user-settings document has no override. */
 export declare const DEFAULT_VOLUME = 0.5;
 /** Default long-task threshold (minutes). */
@@ -28,6 +32,12 @@ export declare const DEFAULT_LONG_TASK_MINUTES = 10;
 export declare const MIN_LONG_TASK_MINUTES = 1;
 /** Maximum long-task threshold (minutes) — seven days. */
 export declare const MAX_LONG_TASK_MINUTES = 10080;
+/** Minimum answer-needed repeat interval (minutes); 0 disables repeating entirely. */
+export declare const MIN_ASK_REPEAT_MINUTES = 0;
+/** Maximum answer-needed repeat interval (minutes) — one day. */
+export declare const MAX_ASK_REPEAT_MINUTES = 1440;
+/** Default answer-needed repeat interval (minutes) while a card stays unanswered. */
+export declare const DEFAULT_ASK_REPEAT_MINUTES = 3;
 /** Web route the node half serves the bundled long-task ("guan-yu") cue under. */
 export declare const GUAN_YU_SOUND_URL = "/completion-sound/guan-yu.wav";
 /**
@@ -43,6 +53,14 @@ export declare const SPECIAL_SOUND_URL = "/completion-sound/special";
  * notify-send on Linux) when the browser channel is missing or blocked.
  */
 export declare const COMPLETION_SOUND_NOTIFY_URL = "/completion-sound/notify";
+/**
+ * Web route the node half serves the answer-needed cue under. Resolves the
+ * `askPath` setting the same way the long-task route resolves `specialPath`,
+ * except an unusable selection 404s instead of falling back to the bundled
+ * sample: the browser then plays its own synthesized cue, which is the better
+ * fallback for "answer me" than a triumphant long-task fanfare.
+ */
+export declare const ASK_SOUND_URL = "/completion-sound/ask";
 /** Durable completion-sound section shared by the Host schema and the browser scope. */
 export interface CompletionSoundSettings {
     /** Master switch: play any sound on turn completion. */
@@ -59,5 +77,9 @@ export interface CompletionSoundSettings {
     specialPath: string;
     /** Raise an alert (attention chime + desktop notification) when a card awaits an answer. */
     askAlert: boolean;
+    /** Re-alert every this many minutes while a card stays unanswered; 0 disables repeating. */
+    askRepeatMinutes: number;
+    /** File or directory for the answer-needed cue; '' plays the synthesized three-note chime. */
+    askPath: string;
 }
 //# sourceMappingURL=settings.d.ts.map

@@ -2,7 +2,7 @@
 
 DSH（DeepSeek Harness）完成提示音插件（bundle）：agent 回合完成时播放提示音；长任务（默认 ≥ 10 分钟）完成时播放「关羽之歌」特殊音乐并弹出可点击停止的模态框；可选触发桌面通知（浏览器通知优先，不可用时自动回退系统通知）；提问 / 计划确认 / 权限审批卡片等待回答时，另有一声「需要你来」的提醒。
 
-> 包名：`@jensentsts/dsh-completion-sound` · 版本：`0.3.0` · License：MIT
+> 包名：`@jensentsts/dsh-completion-sound` · 版本：`0.4.0` · License：MIT
 
 [English](README.md) | [中文](README.zh.md)
 
@@ -37,6 +37,8 @@ dsh plugin --profile web remove @jensentsts/dsh-completion-sound
 
 - **完成提示音**：回合完成时播放 WebAudio 合成的双音提示音（E5 → A5）
 - **等待回答提醒**：`ask_user_question` 提问卡片、计划确认卡片或权限审批卡片等你回答时，播放上行三音提醒（D5 → A5 → D6）并弹出通知——独立开关，与完成提示互不影响
+- **重复催答**：卡片一直没被回答时，按设定的分钟数继续提醒（填 0 只提醒一次）；**回答的那一瞬间自动停止**，切走开关也会立刻终止已在跑的循环
+- **自定义催答音频**：催答可用你自己的音频文件或目录（目录内随机播放）；留空或路径无效时使用内置三音，不会误播长任务的「关羽之歌」
 - **长任务特殊音乐**：长任务完成时播放特殊音乐，并弹出模态框，点击任意处停止
 - **自定义特殊音乐**：可指定单个音频文件，或指定一个目录（每次随机播放其中一首）
 - **内置音频**：默认使用内置的「关羽之歌」（`assets/guan-yu.wav`，约 13.5 MB）
@@ -56,6 +58,8 @@ dsh plugin --profile web remove @jensentsts/dsh-completion-sound
 | `special` | 长任务完成时播放特殊音乐 | `true` | — |
 | `specialPath` | 特殊音乐文件/目录路径（空 = 内置关羽之歌） | `""` | — |
 | `askAlert` | 卡片等待回答时提醒（提示音 + 通知） | `true` | — |
+| `askRepeatMinutes` | 未回答时的重复提醒间隔（分钟，0 = 不重复） | `3` | 0–1440 |
+| `askPath` | 催答音频文件/目录路径（空 = 内置三音） | `""` | — |
 
 ## 特殊音乐语义
 
@@ -108,15 +112,18 @@ completion-sound/
 
 本插件是一个 **DSH 组合包**（bundle），`package.json` 的 `dsh.bundle.patch` 指向 `cordis.patch.yml`，同时声明 `dsh.client`（platform `web`）让模块加载器把 client 半边 serve 到浏览器。
 
-- **Host 半边**（`src/index.ts`）：向设置子系统注册 schema，并注册三个路由：
+- **Host 半边**（`src/index.ts`）：向设置子系统注册 schema，并注册四个路由：
   - `/completion-sound/guan-yu.wav` — 内置关羽之歌（内存缓存后以 `audio/wav` 输出）
   - `/completion-sound/special` — 按 `specialPath` 服务特殊音乐（空→内置；文件→serve；目录→随机选一首，响应头带 `x-dsh-completion-sound-random: 1`）
   - `/completion-sound/notify` — POST 系统通知兜底（macOS `osascript` / Linux `notify-send`），浏览器通知不可用时的跨平台降级
+  - `/completion-sound/ask` — 按 `askPath` serve 催答音频（文件→serve；目录→随机一首）；空或无效时 **404**，由浏览器落回合成三音
 - **Client 半边**（`src/client/index.ts`）：绑定设置、监听回合完成事件，在「设置」中注册 `settings.section`（id `completion-sound`）独立页，并监听「等待回答」的卡片。
   - 等待回答监听：`ctx.uiSession.pendingInteractions` 是 DSH 客户端里「正在等用户的卡片」的唯一登记处（提问 / 计划确认 / 审批三个域都往这里登记），
 按 sessionId 保存当前生效的那一张卡。插件对它做两种差分：某会话新出现、或某会话换了一张新卡（请求 key 变了）；首次读取只记录不响铃，
 所以刷新页面不会为一张本来就开着的卡重复提醒。监听经 `ctx.inject(['uiSession'], …)` 挂载，宿主 profile 没有 Session UI 时静默降级，完成提示音不受影响。
   - 为什么需要单独监听：卡片挂起时 agent 回合仍在 `running`，完成监听永远不会触发，所以「等你回答」必须自己接。
+  - 每会话只存一份状态（请求 key、是否审批、下一次催答定时器）：提醒、重催、停止三种行为读同一份真相。卡片被回答 / 取消 / 换成下一张时先撤销自己的状态，所以不会出现「早就答完了还在响」，同一张卡也不会叠出两个定时器。重复间隔在 **arming 时**读取，因此把间隔改成 0 或关掉开关，会在下一次触发前就安静下来。
+- **催答音频与长任务音乐分属两个独立播放槽**：两者都能被立刻停止且互不误伤——回答那一瞬间掐掉的是催答音，不会打断同一页面里还在播的凯旋曲。`/completion-sound/ask` 在路径为空或不可用时返回 **404**（而 `/special` 会回退到内置音频），浏览器据此落回合成三音；这也避免了「催答误播关羽之歌」这种气质完全不符的降级。
 
 ## 构建
 

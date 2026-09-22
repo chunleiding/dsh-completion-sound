@@ -10,7 +10,7 @@
  * special sample supports immediate stop so a user can silence it the moment
  * it starts.
  */
-import { GUAN_YU_SOUND_URL, SPECIAL_SOUND_URL } from '../settings.ts'
+import { ASK_SOUND_URL, GUAN_YU_SOUND_URL, SPECIAL_SOUND_URL } from '../settings.ts'
 
 let audioContext: AudioContext | null = null
 
@@ -134,19 +134,23 @@ function isRandomPick(response: Response): boolean {
 }
 
 /**
- * Fetch and decode the special cue for one `specialPath`. Empty selects the
- * bundled sample; a file is cached per path, while a directory selection (the
- * host's per-request random pick) is decoded fresh every time.
+ * Fetch and decode a file cue for one selected path through `route`. Empty
+ * selects the bundled sample (the long-task route only — the answer-needed
+ * route 404s an empty or unusable selection so the caller keeps its
+ * synthesized cue). A file is cached per path, while a directory selection (the
+ * host's per-request random pick) is decoded fresh every time. The cache is
+ * keyed by the raw selection, which both routes share, because a given file
+ * holds the same bytes whichever route serves it.
  */
-async function loadSpecial(ctx: AudioContext, specialPath: string): Promise<AudioBuffer> {
-  if (specialPath === '') return loadBundled(ctx)
-  const cached = customBufferCache.get(specialPath)
+async function loadFileCue(ctx: AudioContext, path: string, route: string, bundledOnEmpty: boolean): Promise<AudioBuffer> {
+  if (path === '' && bundledOnEmpty) return loadBundled(ctx)
+  const cached = customBufferCache.get(path)
   if (cached !== undefined) return cached
-  const response = await fetch(SPECIAL_SOUND_URL)
-  if (!response.ok) throw new Error(`completion-sound: special cue HTTP ${response.status}`)
+  const response = await fetch(route)
+  if (!response.ok) throw new Error(`completion-sound: cue HTTP ${response.status}`)
   const buffer = await ctx.decodeAudioData(await response.arrayBuffer())
   if (!isRandomPick(response)) {
-    customBufferCache.set(specialPath, buffer)
+    customBufferCache.set(path, buffer)
     if (customBufferCache.size > CUSTOM_CACHE_MAX) {
       const oldest = customBufferCache.keys().next().value as string | undefined
       if (oldest !== undefined) customBufferCache.delete(oldest)
@@ -155,63 +159,108 @@ async function loadSpecial(ctx: AudioContext, specialPath: string): Promise<Audi
   return buffer
 }
 
-/** Currently playing special-cue source (for immediate stop). */
-let activeSpecial: AudioBufferSourceNode | null = null
-
 /**
- * Monotonic playback epoch, bumped by {@link stopSpecialSound} so an in-flight
- * fetch/decode that finishes after a stop does not start a fresh source.
+ * One independently stoppable file-cue playback slot. The long-task fanfare and
+ * the answer-needed cue each own one: silencing the nag the moment the user
+ * answers must never cut off an unrelated long-task celebration still playing
+ * in the same page.
  */
-let specialEpoch = 0
+interface CueSlot {
+  /** Currently playing source, or null when the slot is idle. */
+  source: AudioBufferSourceNode | null
+  /** Bumped on stop so an in-flight load cannot start after its cue was cancelled. */
+  epoch: number
+}
 
-/**
- * Stop the special cue immediately (no-op when it is not playing). Also
- * cancels any in-flight load that would otherwise start after the stop.
- */
-export function stopSpecialSound(): void {
-  specialEpoch += 1
-  if (activeSpecial !== null) {
+/** The long-task cue slot. */
+const specialSlot: CueSlot = { source: null, epoch: 0 }
+
+/** The answer-needed file-cue slot. */
+const askSlot: CueSlot = { source: null, epoch: 0 }
+
+/** Stop one slot immediately (no-op when idle) and cancel any in-flight load. */
+function stopSlot(slot: CueSlot): void {
+  slot.epoch += 1
+  if (slot.source !== null) {
     try {
-      activeSpecial.stop()
+      slot.source.stop()
     } catch {
       // Source already finished: the onended handler clears the slot.
     }
-    activeSpecial = null
+    slot.source = null
   }
 }
 
 /**
- * Play the special long-task cue at the given gain, resolving `specialPath`
- * ('' = bundled sample) through the host.
+ * Play a file cue through one slot at the given gain.
+ * @param slot - the playback slot owning (and stopping) this cue.
  * @param volume - playback gain, 0..1; values ≤ 0 are silently skipped.
- * @param specialPath - the durable `specialPath` setting selecting the cue source.
+ * @param path - the durable selection naming the cue source.
+ * @param route - the host route resolving that selection to bytes.
+ * @param bundledOnEmpty - whether an empty selection means the bundled sample.
  * @returns true when playback actually started, false when skipped/stopped/failed.
  */
-export async function playSpecialSound(volume: number, specialPath: string): Promise<boolean> {
+async function playSlot(slot: CueSlot, volume: number, path: string, route: string, bundledOnEmpty: boolean): Promise<boolean> {
   if (volume <= 0) return false
-  const epoch = specialEpoch
+  const epoch = slot.epoch
   try {
     const ctx = context()
     if (ctx.state === 'suspended') await ctx.resume()
-    const buffer = await loadSpecial(ctx, specialPath)
-    if (epoch !== specialEpoch) return false
-    if (activeSpecial !== null) {
-      try { activeSpecial.stop() } catch { /* ignore */ }
+    const buffer = await loadFileCue(ctx, path, route, bundledOnEmpty)
+    if (epoch !== slot.epoch) return false
+    if (slot.source !== null) {
+      try { slot.source.stop() } catch { /* ignore */ }
     }
     const source = ctx.createBufferSource()
     const gain = ctx.createGain()
     gain.gain.value = Math.min(1, Math.max(0, volume))
     source.buffer = buffer
     source.onended = () => {
-      if (activeSpecial === source) activeSpecial = null
+      if (slot.source === source) slot.source = null
     }
     source.connect(gain)
     gain.connect(ctx.destination)
-    activeSpecial = source
+    slot.source = source
     source.start()
     return true
   } catch {
-    // Asset missing or audio unavailable: degrade silently.
+    // Asset missing, route 404, or audio unavailable: the caller decides the fallback.
     return false
   }
+}
+
+/**
+ * Play the special long-task cue, resolving `specialPath` ('' = bundled
+ * sample) through the host.
+ * @param volume - playback gain, 0..1; values ≤ 0 are silently skipped.
+ * @param specialPath - the durable `specialPath` setting selecting the cue source.
+ * @returns true when playback actually started, false when skipped/stopped/failed.
+ */
+export function playSpecialSound(volume: number, specialPath: string): Promise<boolean> {
+  return playSlot(specialSlot, volume, specialPath, SPECIAL_SOUND_URL, true)
+}
+
+/** Stop the special long-task cue immediately (no-op when it is not playing). */
+export function stopSpecialSound(): void {
+  stopSlot(specialSlot)
+}
+
+/**
+ * Play the answer-needed file cue, resolving `askPath` through the host. An
+ * empty or unusable selection 404s here, which the caller reads as "fall back
+ * to the synthesized cue".
+ * @param volume - playback gain, 0..1; values ≤ 0 are silently skipped.
+ * @param askPath - the durable `askPath` setting selecting the cue source.
+ * @returns true when playback actually started, false when skipped/stopped/failed.
+ */
+export function playAskSound(volume: number, askPath: string): Promise<boolean> {
+  return playSlot(askSlot, volume, askPath, ASK_SOUND_URL, false)
+}
+
+/**
+ * Stop the answer-needed cue immediately. Called the moment the card is
+ * answered, so a long nag never outlives the question it was asking.
+ */
+export function stopAskSound(): void {
+  stopSlot(askSlot)
 }

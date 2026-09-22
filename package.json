@@ -1,7 +1,7 @@
 {
   "name": "@jensentsts/dsh-completion-sound",
   "description": "DSH completion-sound bundle: a WebAudio chime plus optional long-task music (bundled \"guan-yu\" sample or a user-selected file/directory) and a cross-platform desktop notification when an agent turn finishes; plus a distinct attention cue when a question, plan-review or approval card awaits the user",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publishConfig": {
     "access": "public"
   },

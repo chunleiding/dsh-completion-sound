@@ -11,7 +11,9 @@
 import { useState } from 'react'
 import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import { Button, IconChevronDownOutline14, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
-import { MAX_LONG_TASK_MINUTES, MIN_LONG_TASK_MINUTES } from '../settings.ts'
+import {
+  MAX_ASK_REPEAT_MINUTES, MAX_LONG_TASK_MINUTES, MIN_LONG_TASK_MINUTES,
+} from '../settings.ts'
 import type { createCompletionSoundSectionStore } from './settings-store.ts'
 import type { NotificationOutcome } from './notify.ts'
 import css from './CompletionSoundSection.module.css'
@@ -32,10 +34,14 @@ export interface CompletionSoundSectionInjected {
   setSpecialPath: (value: string) => void
   /** Toggle the answer-needed alert (attention chime + notification). */
   setAskAlert: (value: boolean) => void
+  /** Set the answer-needed re-alert interval in minutes (0 = alert once). */
+  setAskRepeatMinutes: (value: number) => void
+  /** Set the answer-needed audio file/directory ('' = synthesized cue). */
+  setAskPath: (value: string) => void
   /** Preview the short chime at the given gain. */
   previewChime: (volume: number) => void
-  /** Preview the answer-needed alert chime at the given gain. */
-  previewAsk: (volume: number) => void
+  /** Preview the answer-needed cue at the given gain and selection. */
+  previewAsk: (volume: number, askPath: string) => void
   /** Preview the special cue at the given gain (mounts a stop overlay). */
   previewSpecial: (volume: number, specialPath: string) => void
   /** Fire a sample desktop notification, resolving to the permission outcome. */
@@ -117,8 +123,8 @@ function BooleanCapsule({ value, onLabel, offLabel, disabled = false, onSelect }
 export function CompletionSoundSection(props: CompletionSoundSectionComponentProps) {
   const {
     t, useStore, setEnabled, setNotify, setVolume, setLongTaskMinutes,
-    setSpecial, setSpecialPath, setAskAlert, previewChime, previewAsk,
-    previewSpecial, testNotify,
+    setSpecial, setSpecialPath, setAskAlert, setAskRepeatMinutes, setAskPath,
+    previewChime, previewAsk, previewSpecial, testNotify,
   } = props
   if (t === undefined || useStore === undefined) return null
 
@@ -129,6 +135,8 @@ export function CompletionSoundSection(props: CompletionSoundSectionComponentPro
   const special = useStore(s => s.special)
   const specialPath = useStore(s => s.specialPath)
   const askAlert = useStore(s => s.askAlert)
+  const askRepeatMinutes = useStore(s => s.askRepeatMinutes)
+  const askPath = useStore(s => s.askPath)
   const percent = Math.round(volume * 100)
 
   const [notifyOutcome, setNotifyOutcome] = useState<NotifyTestState | null>(null)
@@ -138,6 +146,8 @@ export function CompletionSoundSection(props: CompletionSoundSectionComponentPro
   // spam durable writes, while the preview action flushes a pending path first.
   const [minutesDraft, setMinutesDraft] = useState<string | null>(null)
   const [pathDraft, setPathDraft] = useState<string | null>(null)
+  const [askRepeatDraft, setAskRepeatDraft] = useState<string | null>(null)
+  const [askPathDraft, setAskPathDraft] = useState<string | null>(null)
 
   const commitMinutes = (): void => {
     if (minutesDraft === null) return
@@ -153,6 +163,23 @@ export function CompletionSoundSection(props: CompletionSoundSectionComponentPro
     const value = pathDraft
     setPathDraft(null)
     setSpecialPath(value)
+    return value
+  }
+
+  const commitAskRepeat = (): void => {
+    if (askRepeatDraft === null) return
+    const parsed = Number(askRepeatDraft)
+    setAskRepeatDraft(null)
+    if (Number.isFinite(parsed)) {
+      setAskRepeatMinutes(Math.min(MAX_ASK_REPEAT_MINUTES, Math.max(0, Math.round(parsed))))
+    }
+  }
+
+  const commitAskPath = (): string => {
+    if (askPathDraft === null) return askPath
+    const value = askPathDraft
+    setAskPathDraft(null)
+    setAskPath(value)
     return value
   }
 
@@ -235,7 +262,7 @@ export function CompletionSoundSection(props: CompletionSoundSectionComponentPro
             <div className={css.desc}>{t('completion-sound.askAlertDesc')}</div>
           </div>
           <div className={css.actions}>
-            <Button variant="outline" size="sm" disabled={!askAlert} onClick={() => { previewAsk(volume) }}>
+            <Button variant="outline" size="sm" disabled={!askAlert} onClick={() => { previewAsk(volume, commitAskPath()) }}>
               {t('completion-sound.testAsk')}
             </Button>
             <BooleanCapsule
@@ -245,6 +272,45 @@ export function CompletionSoundSection(props: CompletionSoundSectionComponentPro
               onSelect={setAskAlert}
             />
           </div>
+        </div>
+        <div className={css.row}>
+          <div className={css.rowText}>
+            <div className={css.title}>{t('completion-sound.askRepeat')}</div>
+            <div className={css.desc}>{t('completion-sound.askRepeatDesc')}</div>
+          </div>
+          <label className={css.fieldLine}>
+            <input
+              className={`${css.fieldInput} ${css.numberInput}`}
+              type="number"
+              min={0}
+              max={MAX_ASK_REPEAT_MINUTES}
+              step={1}
+              value={askRepeatDraft ?? String(askRepeatMinutes)}
+              disabled={!askAlert}
+              aria-label={t('completion-sound.askRepeat')}
+              onChange={e => { setAskRepeatDraft(e.target.value) }}
+              onBlur={commitAskRepeat}
+              onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+            />
+            <span className={css.fieldUnit}>{t('completion-sound.minutesUnit')}</span>
+          </label>
+        </div>
+        <div className={css.row}>
+          <div className={css.rowText}>
+            <div className={css.title}>{t('completion-sound.askPath')}</div>
+            <div className={css.desc}>{t('completion-sound.askPathDesc')}</div>
+          </div>
+          <input
+            className={`${css.fieldInput} ${css.pathInput}`}
+            type="text"
+            value={askPathDraft ?? askPath}
+            disabled={!askAlert}
+            placeholder={t('completion-sound.askPathPlaceholder')}
+            aria-label={t('completion-sound.askPath')}
+            onChange={e => { setAskPathDraft(e.target.value) }}
+            onBlur={() => { commitAskPath() }}
+            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+          />
         </div>
       </div>
 

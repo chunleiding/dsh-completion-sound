@@ -5,7 +5,9 @@
  * the section); the section component reads via props.useStore.
  */
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
-import { DEFAULT_LONG_TASK_MINUTES, type CompletionSoundSettings } from '../settings.ts'
+import {
+  DEFAULT_ASK_REPEAT_MINUTES, DEFAULT_LONG_TASK_MINUTES, type CompletionSoundSettings,
+} from '../settings.ts'
 
 /** Store state mirrored from the optimistic settings snapshot. */
 export interface CompletionSoundSectionState {
@@ -23,6 +25,10 @@ export interface CompletionSoundSectionState {
   specialPath: string
   /** Raise the answer-needed alert (attention chime + desktop notification). */
   askAlert: boolean
+  /** Re-alert every this many minutes while a card stays unanswered; 0 = once. */
+  askRepeatMinutes: number
+  /** Answer-needed audio file/directory ('' = synthesized cue). */
+  askPath: string
   /** A value has been published (defaults or adopted durable section). */
   ready: boolean
   /** Monotonic guard: drops stale publishes and duplicate adoptions. */
@@ -48,6 +54,8 @@ export function createCompletionSoundSectionStore(): EngineStoreHandle<Completio
       special: true,
       specialPath: '',
       askAlert: true,
+      askRepeatMinutes: DEFAULT_ASK_REPEAT_MINUTES,
+      askPath: '',
       ready: false,
       revision: -1,
     }),
@@ -61,6 +69,8 @@ export function createCompletionSoundSectionStore(): EngineStoreHandle<Completio
         d.special = settings.special
         d.specialPath = settings.specialPath
         d.askAlert = settings.askAlert
+        d.askRepeatMinutes = settings.askRepeatMinutes
+        d.askPath = settings.askPath
         d.ready = true
         d.revision = revision
       },

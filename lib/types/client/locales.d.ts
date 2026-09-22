@@ -23,6 +23,13 @@ export declare const zh: {
     'completion-sound.testAsk': string;
     'completion-sound.asked': string;
     'completion-sound.askedApproval': string;
+    'completion-sound.askedAgain': string;
+    'completion-sound.askedApprovalAgain': string;
+    'completion-sound.askRepeat': string;
+    'completion-sound.askRepeatDesc': string;
+    'completion-sound.askPath': string;
+    'completion-sound.askPathDesc': string;
+    'completion-sound.askPathPlaceholder': string;
     'completion-sound.notified': string;
     'completion-sound.notifyTestBody': string;
     'completion-sound.notifyGranted': string;
@@ -65,6 +72,13 @@ export declare const en: {
     'completion-sound.testAsk': string;
     'completion-sound.asked': string;
     'completion-sound.askedApproval': string;
+    'completion-sound.askedAgain': string;
+    'completion-sound.askedApprovalAgain': string;
+    'completion-sound.askRepeat': string;
+    'completion-sound.askRepeatDesc': string;
+    'completion-sound.askPath': string;
+    'completion-sound.askPathDesc': string;
+    'completion-sound.askPathPlaceholder': string;
     'completion-sound.notified': string;
     'completion-sound.notifyTestBody': string;
     'completion-sound.notifyGranted': string;
