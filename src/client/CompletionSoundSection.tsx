@@ -10,7 +10,7 @@
  */
 import { useState } from 'react'
 import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
-import { Button, IconChevronDownOutline14, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronDownOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   MAX_ASK_REPEAT_MINUTES, MAX_LONG_TASK_MINUTES, MIN_LONG_TASK_MINUTES,
 } from '../settings.ts'
@@ -108,7 +108,7 @@ function BooleanCapsule({ value, onLabel, offLabel, disabled = false, onSelect }
           onClick={() => { setOpen(current => !current) }}
         >
           {value ? onLabel : offLabel}
-          <IconChevronDownOutline14 className={css.chevron} />
+          <IconChevronDownOutlineRegular className={css.chevron} />
         </button>
       )}
     />

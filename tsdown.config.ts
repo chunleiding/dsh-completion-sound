@@ -20,15 +20,17 @@ import type { UserConfig } from 'tsdown'
 /** Plugin id stamped into the loader handoff and the injected style tags. */
 const ID = '@jensentsts/dsh-completion-sound'
 
-/** Browser platform modules the shell shares into the frozen module table. */
+/**
+ * Browser platform modules the shell shares into the frozen module table
+ * (the seed words the web frontend registers). A specifier outside this list
+ * has to be requested through `dsh.client.external` in package.json, so it is
+ * kept to exactly what this bundle imports.
+ */
 const PLATFORM_MODULES = [
   'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
   '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-ui-attachment',
-  '@deepseek-ai/dsh-client-schema-form',
 ] as const
 
 /** Externals resolved from the loader module table (platform seed). */

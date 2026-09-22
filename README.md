@@ -2,7 +2,9 @@
 
 A DSH (DeepSeek Harness) completion-sound bundle: plays a chime when an agent turn finishes; plays the special "Guan Yu's Song" music and shows a click-to-stop modal when a long task (≥ 10 minutes by default) finishes; optionally fires a desktop notification (browser notification first, with an automatic fallback to a system notification); and raises a separate "I need you" alert when a question / plan-review / approval card is waiting for your answer.
 
-> Package: `@jensentsts/dsh-completion-sound` · Version: `0.4.0` · License: MIT
+> Package: `@jensentsts/dsh-completion-sound` · Version: `0.5.0` · License: MIT
+>
+> Requires DSH `>=0.1.7-alpha.1`. For DSH `0.1.5`–`0.1.6`, use release `0.4.0`.
 
 [English](README.md) | [中文](README.zh.md)
 
@@ -31,7 +33,13 @@ dsh plugin --profile web remove @jensentsts/dsh-completion-sound
 
 ## Relationship to the built-in completion sound
 
-The `dsh-web-app` bundle ships a built-in completion-sound row (`ui-completion-sound` → `@deepseek-ai/dsh-client-ui-completion-sound`). This bundle's `cordis.patch.yml` **disables that built-in row** and inserts its own row (id `completion-sound`), so when a web profile has both `dsh-web-app` and this plugin, this plugin takes over completion sounds and nothing plays twice. In a profile without `dsh-web-app`, the disable step is silently skipped and the insert still applies.
+DSH 0.1.7 **removed** the built-in completion-sound row (`ui-completion-sound` → `@deepseek-ai/dsh-client-ui-completion-sound`), so this bundle is now the profile's only completion cue: its `cordis.patch.yml` inserts one row (id `completion-sound`) and disables nothing. On DSH ≤ 0.1.6 the built-in row still exists — use release `0.4.0` there, which disables it before inserting its own so nothing plays twice.
+
+## Where the preferences live
+
+DSH 0.1.7 replaced the `~/.dsh/settings.yaml` document with per-entry configuration. This plugin's preferences are its loader entry `Config`, so they are stored in the **profile patch** (`~/.dsh/profiles/<profile>/cordis.patch.yml`) under the `completion-sound` row's `config:` key. Every field is `volatile`, so a write from the settings page takes effect immediately — including on the host's audio routes — with no restart.
+
+> Upgrading from `0.4.0`? DSH renamed the old document to `settings.yaml.imported` and migrates each section into its entry, but a `completion-sound` section only migrates if this plugin was installed at that moment. If it was not, copy the values out of `~/.dsh/settings.yaml.imported` into the row's `config:` (or just re-enter them on the settings page).
 
 ## Features
 
@@ -100,7 +108,7 @@ completion-sound/
 │   ├── client.js                # Client half (browser bundle)
 │   └── types/**/*.d.ts          # type declarations
 ├── package.json
-├── cordis.patch.yml             # bundle patch (disable built-in row + insert this plugin's row)
+├── cordis.patch.yml             # bundle patch (inserts this plugin's loader row)
 ├── tsconfig.json
 ├── tsdown.config.ts
 ├── LICENSE
@@ -112,14 +120,14 @@ completion-sound/
 
 This plugin is a **DSH bundle**: `package.json`'s `dsh.bundle.patch` points at `cordis.patch.yml`, and it also declares `dsh.client` (platform `web`) so the module loader serves the client half to the browser.
 
-- **Host half** (`src/index.ts`): registers the settings schema and three routes:
+- **Host half** (`src/index.ts`): exports the entry `Config` schema — the preferences themselves, every field `volatile` so a settings write is live without a restart — and registers four routes:
   - `/completion-sound/guan-yu.wav` — bundled Guan Yu's Song (memory-cached, served as `audio/wav`)
   - `/completion-sound/special` — serves special music by `specialPath` (empty→bundled; file→served; directory→one random pick, with header `x-dsh-completion-sound-random: 1`)
   - `/completion-sound/notify` — POST system-notification fallback (macOS `osascript` / Linux `notify-send`) for when browser notifications are unavailable
   - `/completion-sound/ask` — serves the answer-needed cue by `askPath` (file→served; directory→one random pick); **404** when empty or unusable so the browser falls back to its synthesized cue
-- **Client half** (`src/client/index.ts`): binds settings, watches turn-completion events, registers the `settings.section` (id `completion-sound`) dedicated page, and watches for cards waiting on you.
-  - The answer-needed watch: `ctx.uiSession.pendingInteractions` is DSH's single registry of "cards waiting on the user" (the question,
-plan-review and approval domains all publish into it), a snapshot source holding the one effective card per session. The plugin diffs both a
+- **Client half** (`src/client/index.ts`): reads the preferences through `ctx.configForms.get('completion-sound')` (the settings domain's shared form for this entry), watches turn-completion events, registers the `settings.section` (id `completion-sound`) dedicated page, and watches for cards waiting on you.
+  - The answer-needed watch: `ctx.uiSession.sessionStatus` carries each session's UI status facts, among them `pendingInteraction` — DSH's single registry of "cards waiting on the user" (the question,
+plan-review and approval domains all publish into it), holding the one effective card per session. The plugin diffs both a
 newly appearing session and a session whose card was replaced by a newer request key; the first read only records, so reloading the page
 never re-alerts a card that was already open. It attaches via `ctx.inject(['uiSession'], …)`, so a profile without the Session UI degrades
 quietly and completion sounds keep working.

@@ -10,7 +10,7 @@
  */
 import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-// Type-only: the ctx.settingsScope Context merge. Cross-plugin collaboration
+// Type-only: the ctx.configForms Context merge. Cross-plugin collaboration
 // goes through the service, never a value import (client bundle purity gate).
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
@@ -22,10 +22,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: pulls the session controller's Context merge (ctx.sessions).
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the Session UI's Context merge (ctx.uiSession), whose
-// pendingInteractions source is the roster of cards waiting on the user. The
-// branded Session id key type is derived off that snapshot face rather than
-// imported from the Session package, so this bundle names no extra dependency.
-import type { SessionPendingInteractionSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
+// sessionStatus source carries each session's pending interaction — the roster
+// of cards waiting on the user. The branded Session id key type is derived off
+// the interaction rather than imported from the Session package, so this bundle
+// names no extra dependency.
+import type { SessionPendingInteraction } from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import {
   COMPLETION_SOUND_SETTINGS_NAMESPACE, DEFAULT_ASK_REPEAT_MINUTES, DEFAULT_LONG_TASK_MINUTES,
@@ -58,8 +59,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-/** Required services: sessions (completion watch) plus settings/slots/locale for the section. */
-export const inject = ['sessions', 'slots', 'locale', 'connection', 'remote', 'settingsScope']
+/** Required services: sessions (completion watch) plus config forms/slots/locale for the section. */
+export const inject = ['sessions', 'slots', 'locale', 'configForms']
 
 /** Defaults applied until the Host settings section resolves. */
 const DEFAULT_SETTINGS: CompletionSoundSettings = Object.freeze({
@@ -86,7 +87,7 @@ function longTaskMs(settings: CompletionSoundSettings): number {
  * @param ctx - client cordis context.
  */
 export function apply(ctx: ClientContext): void {
-  const scope = ctx.settingsScope.bind<CompletionSoundSettings>({ namespace: COMPLETION_SOUND_SETTINGS_NAMESPACE })
+  const form = ctx.configForms.get<CompletionSoundSettings>(COMPLETION_SOUND_SETTINGS_NAMESPACE)
 
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-completion-sound: settings section dictionaries')
 
@@ -147,7 +148,7 @@ export function apply(ctx: ClientContext): void {
   // Adopt the durable section (initial load + external writes). Scope change
   // always wins: bump revision so the store's guard never drops it.
   const adopt = (): void => {
-    const value = scope.getSnapshot().value
+    const value = form.getSnapshot().value
     if (value === undefined) return
     revision += 1
     // Spread over the defaults rather than replacing wholesale: a Host half that
@@ -157,7 +158,7 @@ export function apply(ctx: ClientContext): void {
     settings = { ...DEFAULT_SETTINGS, ...value }
     publish()
   }
-  ctx.effect(() => scope.subscribe(adopt), 'ui-completion-sound: settings scope adoption')
+  ctx.effect(() => form.subscribe(adopt), 'ui-completion-sound: config form adoption')
 
   // Optimistic write: reflect locally + in the section store immediately, then
   // persist in the background. A failed persist is reconciled by `adopt`.
@@ -165,7 +166,10 @@ export function apply(ctx: ClientContext): void {
     settings = { ...settings, [field]: value }
     revision += 1
     publish()
-    void scope.set(field, value)
+    // A refused or lost write is not an error the switch can act on: the next
+    // `adopt` reconciles the row from the Host, so the rejection is swallowed
+    // here rather than surfacing as an unhandled promise rejection.
+    form.set(field, value).catch(() => {})
   }
 
   // Completion watch: diff each session's `running` flag across list snapshots,
@@ -206,15 +210,16 @@ export function apply(ctx: ClientContext): void {
   // Answer-needed watch: `ask_user_question`, a plan review, or an approval
   // prompt blocks the turn until the user answers, and the session stays
   // `running` the whole time — so the completion watch above is silent for it.
-  // The Session pending-interaction source is the roster of exactly those cards
-  // (one effective entry per session), so this is the only place that can see
-  // them. `awaiting` is the single record of what has been announced per
+  // The Session UI's status source carries each session's highest-precedence
+  // `pendingInteraction`, which is the roster of exactly those cards (one
+  // effective entry per session), so this is the only place that can see them.
+  // `awaiting` is the single record of what has been announced per
   // session — its request key, its kind, and its pending re-alert timer — so
   // announcing, repeating, and stopping all read one truth instead of racing a
   // second dedupe map. Read through an optional inject: a profile without the
   // Session UI keeps the completion cue and only loses this one.
   ctx.inject(['uiSession'], (sessionCtx) => {
-    type PendingId = Parameters<SessionPendingInteractionSnapshot['get']>[0]
+    type PendingId = SessionPendingInteraction['sessionId']
     /** Per-session announcement state, keyed by Session id. */
     interface Awaiting {
       /** Request key last announced for this session. */
@@ -225,6 +230,10 @@ export function apply(ctx: ClientContext): void {
       timer: ReturnType<typeof setTimeout> | null
     }
     const awaiting = new Map<PendingId, Awaiting>()
+
+    /** The card one session is currently waiting on, if any. */
+    const pendingOf = (id: PendingId): SessionPendingInteraction | undefined =>
+      sessionCtx.uiSession.sessionStatus.getSnapshot().get(id)?.pendingInteraction
 
     /** Play the answer-needed cue: the selected file when usable, else the synthesized chime. */
     const playAskCue = (): void => {
@@ -268,8 +277,7 @@ export function apply(ctx: ClientContext): void {
       if (settings.askRepeatMinutes <= 0) return
       entry.timer = setTimeout(() => {
         entry.timer = null
-        const snapshot = sessionCtx.uiSession.pendingInteractions.getSnapshot()
-        const interaction = snapshot.get(id)
+        const interaction = pendingOf(id)
         // The card may have been answered, replaced, or handed to another tab in
         // the meantime; only a still-open card with the same key keeps nagging.
         if (interaction === undefined || interaction.key !== entry.key) return
@@ -290,17 +298,20 @@ export function apply(ctx: ClientContext): void {
     }
 
     const observe = (): void => {
-      const snapshot = sessionCtx.uiSession.pendingInteractions.getSnapshot()
+      const snapshot = sessionCtx.uiSession.sessionStatus.getSnapshot()
       // Retire anything no longer outstanding, or superseded by a newer request,
       // before deciding what is new — so a replaced card stops its old nag and is
       // then announced afresh, rather than stacking a second timer on it.
       for (const [id, entry] of [...awaiting]) {
-        const interaction = snapshot.get(id)
+        const interaction = snapshot.get(id)?.pendingInteraction
         if (interaction === undefined || interaction.key !== entry.key) retire(id)
       }
       const arrivals: PendingId[] = []
-      for (const [id, interaction] of snapshot) {
-        if (awaiting.has(id)) continue
+      for (const [id, status] of snapshot) {
+        const interaction = status.pendingInteraction
+        // The status source also reports running/completion facts, so most rows
+        // carry no card at all.
+        if (interaction === undefined || awaiting.has(id)) continue
         awaiting.set(id, {
           key: interaction.key,
           approving: interaction.kind === 'approval',
@@ -320,11 +331,13 @@ export function apply(ctx: ClientContext): void {
 
     // A card already on screen when this page (or plugin) starts was announced by
     // whoever was alive when it appeared: record it so a reload never re-alerts.
-    for (const [id, interaction] of sessionCtx.uiSession.pendingInteractions.getSnapshot()) {
+    for (const [id, status] of sessionCtx.uiSession.sessionStatus.getSnapshot()) {
+      const interaction = status.pendingInteraction
+      if (interaction === undefined) continue
       awaiting.set(id, { key: interaction.key, approving: interaction.kind === 'approval', timer: null })
     }
     sessionCtx.effect(() => {
-      const unsubscribe = sessionCtx.uiSession.pendingInteractions.subscribe(observe)
+      const unsubscribe = sessionCtx.uiSession.sessionStatus.subscribe(observe)
       return () => {
         unsubscribe()
         for (const id of [...awaiting.keys()]) retire(id)

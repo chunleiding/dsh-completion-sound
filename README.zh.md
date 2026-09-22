@@ -2,7 +2,9 @@
 
 DSH（DeepSeek Harness）完成提示音插件（bundle）：agent 回合完成时播放提示音；长任务（默认 ≥ 10 分钟）完成时播放「关羽之歌」特殊音乐并弹出可点击停止的模态框；可选触发桌面通知（浏览器通知优先，不可用时自动回退系统通知）；提问 / 计划确认 / 权限审批卡片等待回答时，另有一声「需要你来」的提醒。
 
-> 包名：`@jensentsts/dsh-completion-sound` · 版本：`0.4.0` · License：MIT
+> 包名：`@jensentsts/dsh-completion-sound` · 版本：`0.5.0` · License：MIT
+>
+> 需要 DSH `>=0.1.7-alpha.1`。DSH `0.1.5`–`0.1.6` 请使用 `0.4.0` 版本。
 
 [English](README.md) | [中文](README.zh.md)
 
@@ -31,7 +33,13 @@ dsh plugin --profile web remove @jensentsts/dsh-completion-sound
 
 ## 与内置完成提示音的关系
 
-`dsh-web-app` 组合包内置了一个完成提示音行（`ui-completion-sound` → `@deepseek-ai/dsh-client-ui-completion-sound`）。本 bundle 的 `cordis.patch.yml` 会**禁用该内置行**并插入自己的行（id `completion-sound`），因此在一个 web profile 里同时装了 `dsh-web-app` 和本插件时，由本插件接管完成提示音，不会重复播放。在没有 `dsh-web-app` 的 profile 里，禁用步骤被静默跳过，插入步骤照常生效。
+DSH 0.1.7 已经**移除**了内置的完成提示音行（`ui-completion-sound` → `@deepseek-ai/dsh-client-ui-completion-sound`），所以本 bundle 现在就是 profile 里唯一的完成提示音：`cordis.patch.yml` 只插入一行（id `completion-sound`），不再需要禁用任何内置行。DSH ≤ 0.1.6 上内置行仍然存在，请改用 `0.4.0` 版本——它会先禁用内置行再插入自己的行，避免重复播放。
+
+## 偏好设置存在哪里
+
+DSH 0.1.7 用「按 loader 条目配置」取代了 `~/.dsh/settings.yaml` 文档。本插件的偏好设置就是它自己的 loader 条目 `Config`，因此存放在 **profile patch**（`~/.dsh/profiles/<profile>/cordis.patch.yml`）里 `completion-sound` 行的 `config:` 下。所有字段都是 `volatile`，所以在设置页改动后立即生效——包括 host 侧的音频路由——无需重启。
+
+> 从 `0.4.0` 升级？DSH 会把旧文档改名为 `settings.yaml.imported`，并把每个 section 迁移到对应条目；但 `completion-sound` 这一段只有在迁移发生时插件正好装着才会被迁移。如果当时没装，请手工把 `~/.dsh/settings.yaml.imported` 里的值抄进该行的 `config:`（或直接在设置页重填一遍）。
 
 ## 功能特性
 
@@ -100,7 +108,7 @@ completion-sound/
 │   ├── client.js                # Client 半边（browser bundle）
 │   └── types/**/*.d.ts          # 类型声明
 ├── package.json
-├── cordis.patch.yml             # bundle patch（禁用内置行 + 插入本插件行）
+├── cordis.patch.yml             # bundle patch（插入本插件的 loader 行）
 ├── tsconfig.json
 ├── tsdown.config.ts
 ├── LICENSE
@@ -112,13 +120,13 @@ completion-sound/
 
 本插件是一个 **DSH 组合包**（bundle），`package.json` 的 `dsh.bundle.patch` 指向 `cordis.patch.yml`，同时声明 `dsh.client`（platform `web`）让模块加载器把 client 半边 serve 到浏览器。
 
-- **Host 半边**（`src/index.ts`）：向设置子系统注册 schema，并注册四个路由：
+- **Host 半边**（`src/index.ts`）：导出条目自己的 `Config` schema——也就是偏好设置本身，每个字段都是 `volatile`，因此设置写入后无需重启即可生效——并注册四个路由：
   - `/completion-sound/guan-yu.wav` — 内置关羽之歌（内存缓存后以 `audio/wav` 输出）
   - `/completion-sound/special` — 按 `specialPath` 服务特殊音乐（空→内置；文件→serve；目录→随机选一首，响应头带 `x-dsh-completion-sound-random: 1`）
   - `/completion-sound/notify` — POST 系统通知兜底（macOS `osascript` / Linux `notify-send`），浏览器通知不可用时的跨平台降级
   - `/completion-sound/ask` — 按 `askPath` serve 催答音频（文件→serve；目录→随机一首）；空或无效时 **404**，由浏览器落回合成三音
-- **Client 半边**（`src/client/index.ts`）：绑定设置、监听回合完成事件，在「设置」中注册 `settings.section`（id `completion-sound`）独立页，并监听「等待回答」的卡片。
-  - 等待回答监听：`ctx.uiSession.pendingInteractions` 是 DSH 客户端里「正在等用户的卡片」的唯一登记处（提问 / 计划确认 / 审批三个域都往这里登记），
+- **Client 半边**（`src/client/index.ts`）：通过 `ctx.configForms.get('completion-sound')`（设置域为本条目提供的共享表单）读取偏好设置、监听回合完成事件，在「设置」中注册 `settings.section`（id `completion-sound`）独立页，并监听「等待回答」的卡片。
+  - 等待回答监听：`ctx.uiSession.sessionStatus` 携带每个会话的 UI 状态事实，其中的 `pendingInteraction` 就是 DSH 客户端里「正在等用户的卡片」的唯一登记处（提问 / 计划确认 / 审批三个域都往这里登记），
 按 sessionId 保存当前生效的那一张卡。插件对它做两种差分：某会话新出现、或某会话换了一张新卡（请求 key 变了）；首次读取只记录不响铃，
 所以刷新页面不会为一张本来就开着的卡重复提醒。监听经 `ctx.inject(['uiSession'], …)` 挂载，宿主 profile 没有 Session UI 时静默降级，完成提示音不受影响。
   - 为什么需要单独监听：卡片挂起时 agent 回合仍在 `running`，完成监听永远不会触发，所以「等你回答」必须自己接。

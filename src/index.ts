@@ -1,11 +1,10 @@
 /**
- * Host registration for the browser completion-sound preferences, the bundled
- * long-task cue asset, and the user-selected special-cue resolver. The special
- * route reads the durable `specialPath` setting at request time: empty serves
- * the bundled "guan-yu" sample, a file serves itself, and a directory serves
- * one random audio file found within it (bounded recursive scan). An unusable
- * selection falls back to the bundled sample so a completion never loses its
- * cue.
+ * Host half: this entry's live configuration form, the bundled long-task cue
+ * asset, and the user-selected special-cue resolver. The special route reads
+ * the `specialPath` preference at request time: empty serves the bundled
+ * "guan-yu" sample, a file serves itself, and a directory serves one random
+ * audio file found within it (bounded recursive scan). An unusable selection
+ * falls back to the bundled sample so a completion never loses its cue.
  */
 
 import { spawn } from 'node:child_process'
@@ -14,21 +13,21 @@ import type { Dirent } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Volatile } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { type SettingsNamespace, type SettingsScope } from '@deepseek-ai/dsh-settings'
+// Type-only: pulls the settings Context merge (ctx.settings) used to opt this
+// entry out of the auto-generated configuration page.
+import type {} from '@deepseek-ai/dsh-settings'
 // Type-only: pulls the webServer Context merge (ctx.webServer).
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import {
   COMPLETION_SOUND_ENABLED_FIELD, COMPLETION_SOUND_LONG_TASK_MINUTES_FIELD,
   COMPLETION_SOUND_NOTIFY_FIELD, COMPLETION_SOUND_NOTIFY_URL,
-  COMPLETION_SOUND_SETTINGS_NAMESPACE,
   COMPLETION_SOUND_ASK_ALERT_FIELD, COMPLETION_SOUND_ASK_PATH_FIELD, COMPLETION_SOUND_ASK_REPEAT_FIELD,
   COMPLETION_SOUND_SPECIAL_FIELD, COMPLETION_SOUND_SPECIAL_PATH_FIELD, COMPLETION_SOUND_VOLUME_FIELD,
   DEFAULT_ASK_REPEAT_MINUTES, DEFAULT_LONG_TASK_MINUTES, DEFAULT_VOLUME,
   GUAN_YU_SOUND_URL, MAX_ASK_REPEAT_MINUTES, MAX_LONG_TASK_MINUTES,
   MIN_ASK_REPEAT_MINUTES, MIN_LONG_TASK_MINUTES, SPECIAL_SOUND_URL, ASK_SOUND_URL,
-  type CompletionSoundSettings,
 } from './settings.ts'
 
 export {
@@ -43,23 +42,57 @@ export {
   type CompletionSoundSettings,
 } from './settings.ts'
 
-/** Durable completion-sound schema; also the wire envelope the browser scope validates against. */
-const CompletionSoundSettingsSchema: z<CompletionSoundSettings> = z.object({
-  [COMPLETION_SOUND_ENABLED_FIELD]: z.boolean().default(true),
-  [COMPLETION_SOUND_NOTIFY_FIELD]: z.boolean().default(false),
-  [COMPLETION_SOUND_VOLUME_FIELD]: z.number().min(0).max(1).default(DEFAULT_VOLUME),
+/**
+ * The live preference references the loader hands `apply`. Each field is a
+ * stable reference rather than a value: a settings write lands in the profile
+ * patch and the reference keeps serving the new value, so the cue routes need
+ * no reload to see it.
+ */
+export interface Config {
+  /** Master switch: play any sound on turn completion. */
+  enabled: Volatile<boolean>
+  /** Also raise a desktop notification when a turn finishes. */
+  notify: Volatile<boolean>
+  /** Playback gain, 0 (silent) through 1 (full). */
+  volume: Volatile<number>
+  /** Turns lasting at least this many minutes earn long-task handling. */
+  longTaskMinutes: Volatile<number>
+  /** Play the special long-task music instead of the chime on long turns. */
+  special: Volatile<boolean>
+  /** File or directory for the special music; '' selects the bundled sample. */
+  specialPath: Volatile<string>
+  /** Alert when a card awaits an answer. */
+  askAlert: Volatile<boolean>
+  /** Re-alert interval while a card stays unanswered; 0 disables repeating. */
+  askRepeatMinutes: Volatile<number>
+  /** File or directory for the answer-needed cue; '' plays the synthesized chime. */
+  askPath: Volatile<string>
+}
+
+/**
+ * This entry's configuration schema. Every field is `volatile`, which is what
+ * makes it a user-editable settings form: the settings service projects the
+ * volatile fields of each loader entry's Config into its page, keyed by the
+ * entry id (`completion-sound`), and refuses writes to anything not marked.
+ */
+export const Config = z.object({
+  [COMPLETION_SOUND_ENABLED_FIELD]: z.boolean().default(true).volatile(),
+  [COMPLETION_SOUND_NOTIFY_FIELD]: z.boolean().default(false).volatile(),
+  [COMPLETION_SOUND_VOLUME_FIELD]: z.number().min(0).max(1).default(DEFAULT_VOLUME).volatile(),
   [COMPLETION_SOUND_LONG_TASK_MINUTES_FIELD]: z.number()
     .min(MIN_LONG_TASK_MINUTES)
     .max(MAX_LONG_TASK_MINUTES)
-    .default(DEFAULT_LONG_TASK_MINUTES),
-  [COMPLETION_SOUND_SPECIAL_FIELD]: z.boolean().default(true),
-  [COMPLETION_SOUND_SPECIAL_PATH_FIELD]: z.string().default(''),
-  [COMPLETION_SOUND_ASK_ALERT_FIELD]: z.boolean().default(true),
+    .default(DEFAULT_LONG_TASK_MINUTES)
+    .volatile(),
+  [COMPLETION_SOUND_SPECIAL_FIELD]: z.boolean().default(true).volatile(),
+  [COMPLETION_SOUND_SPECIAL_PATH_FIELD]: z.string().default('').volatile(),
+  [COMPLETION_SOUND_ASK_ALERT_FIELD]: z.boolean().default(true).volatile(),
   [COMPLETION_SOUND_ASK_REPEAT_FIELD]: z.number()
     .min(MIN_ASK_REPEAT_MINUTES)
     .max(MAX_ASK_REPEAT_MINUTES)
-    .default(DEFAULT_ASK_REPEAT_MINUTES),
-  [COMPLETION_SOUND_ASK_PATH_FIELD]: z.string().default(''),
+    .default(DEFAULT_ASK_REPEAT_MINUTES)
+    .volatile(),
+  [COMPLETION_SOUND_ASK_PATH_FIELD]: z.string().default('').volatile(),
 })
 
 /**
@@ -261,21 +294,17 @@ const serveNotify = async (req: IncomingMessage, res: ServerResponse): Promise<v
 }
 
 /**
- * Register the durable completion-sound section when a settings provider
- * exists, and serve the bundled cue plus the special-cue resolver when the web
- * server exists.
+ * Own this entry's page policy and serve the cue routes. The preferences ride
+ * the entry Config, so there is nothing to register — the loader validates and
+ * resolves them, and each `volatile` field stays live across a settings write.
  * @param ctx - Host context.
+ * @param config - validated live completion-sound preferences.
  */
-export function apply(ctx: Context): void {
-  let settings: SettingsScope<CompletionSoundSettings> | null = null
+export function apply(ctx: Context, config: Config): void {
+  // This bundle draws its own `settings.section` page, so opt out of the form
+  // the settings service would otherwise generate from the same schema.
   ctx.inject(['settings'], (settingsCtx) => {
-    settings = settingsCtx.settings.register(
-      // `settingsNamespace` was dropped from dsh-settings after the 0.1.0 line;
-      // the brand is phantom at runtime and `register` validates the identifier
-      // itself, so a cast keeps this working on both lines.
-      COMPLETION_SOUND_SETTINGS_NAMESPACE as SettingsNamespace,
-      CompletionSoundSettingsSchema,
-    )
+    settingsCtx.effect(() => settingsCtx.settings.configure({ auto: false }, ctx.fiber))
   })
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(
@@ -287,7 +316,7 @@ export function apply(ctx: Context): void {
     // back to the bundled sample so a completion never loses its music, while
     // the answer-needed cue 404s so the browser plays its synthesized chime
     // instead of a triumphant fanfare that does not fit "answer me".
-    const cueRoute = (select: (values: CompletionSoundSettings) => string, bundledFallback: boolean) => async (
+    const cueRoute = (select: (values: Config) => string, bundledFallback: boolean) => async (
       req: IncomingMessage,
       res: ServerResponse,
     ): Promise<void> => {
@@ -297,7 +326,7 @@ export function apply(ctx: Context): void {
         return
       }
       try {
-        const picked = await resolveCueSelection(settings === null ? '' : select(settings.get()))
+        const picked = await resolveCueSelection(select(config))
         if (picked !== null) {
           serveBody(req, res, picked.body, picked.contentType, picked.random)
           return
@@ -315,11 +344,11 @@ export function apply(ctx: Context): void {
       }
     }
     webCtx.effect(
-      () => webCtx.webServer.register({ kind: 'exact', path: SPECIAL_SOUND_URL, handler: cueRoute(values => values[COMPLETION_SOUND_SPECIAL_PATH_FIELD], true) }),
+      () => webCtx.webServer.register({ kind: 'exact', path: SPECIAL_SOUND_URL, handler: cueRoute(values => values.specialPath.get(), true) }),
       'ui-completion-sound: special-cue resolver route',
     )
     webCtx.effect(
-      () => webCtx.webServer.register({ kind: 'exact', path: ASK_SOUND_URL, handler: cueRoute(values => values[COMPLETION_SOUND_ASK_PATH_FIELD], false) }),
+      () => webCtx.webServer.register({ kind: 'exact', path: ASK_SOUND_URL, handler: cueRoute(values => values.askPath.get(), false) }),
       'ui-completion-sound: answer-needed cue route',
     )
     webCtx.effect(

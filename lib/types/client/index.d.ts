@@ -12,7 +12,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
         'settings.completion-sound': CompletionSoundKey;
     }
 }
-/** Required services: sessions (completion watch) plus settings/slots/locale for the section. */
+/** Required services: sessions (completion watch) plus config forms/slots/locale for the section. */
 export declare const inject: string[];
 /**
  * Client plugin body: register the section, prime audio on the first gesture,

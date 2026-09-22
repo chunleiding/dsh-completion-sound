@@ -1,10 +1,14 @@
 /**
- * Completion-sound preferences stored in the Host user-settings document.
+ * Completion-sound preferences, carried by this plugin's profile entry Config.
  * Schema-free on purpose: the schema (which needs schemastery) lives in the
  * node half, so the browser bundle never inlines it. This module carries only
- * the namespace identity, the field names, and the shared section type.
+ * the entry identity, the field names, and the shared section type.
  */
-/** Settings namespace owned by the completion-sound plugin. */
+/**
+ * Settings namespace of the completion-sound preferences — the profile loader
+ * entry id, which is what the settings forms key a namespace by and what the
+ * browser half asks `ctx.configForms` for.
+ */
 export declare const COMPLETION_SOUND_SETTINGS_NAMESPACE = "completion-sound";
 /** Field carrying the master sound switch. */
 export declare const COMPLETION_SOUND_ENABLED_FIELD = "enabled";
