@@ -16,7 +16,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export declare const inject: string[];
 /**
  * Client plugin body: register the section, prime audio on the first gesture,
- * and watch the sessions list for running → idle transitions.
+ * watch the sessions list for running → idle transitions, and watch the Session
+ * pending-interaction source for cards that need an answer.
  * @param ctx - client cordis context.
  */
 export declare function apply(ctx: ClientContext): void;

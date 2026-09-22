@@ -1,8 +1,8 @@
 # dsh-completion-sound
 
-A DSH (DeepSeek Harness) completion-sound bundle: plays a chime when an agent turn finishes; plays the special "Guan Yu's Song" music and shows a click-to-stop modal when a long task (≥ 10 minutes by default) finishes; optionally fires a desktop notification (browser notification first, with an automatic fallback to a system notification).
+A DSH (DeepSeek Harness) completion-sound bundle: plays a chime when an agent turn finishes; plays the special "Guan Yu's Song" music and shows a click-to-stop modal when a long task (≥ 10 minutes by default) finishes; optionally fires a desktop notification (browser notification first, with an automatic fallback to a system notification); and raises a separate "I need you" alert when a question / plan-review / approval card is waiting for your answer.
 
-> Package: `@jensentsts/dsh-completion-sound` · Version: `0.1.0` · License: MIT
+> Package: `@jensentsts/dsh-completion-sound` · Version: `0.3.0` · License: MIT
 
 [English](README.md) | [中文](README.zh.md)
 
@@ -36,6 +36,7 @@ The `dsh-web-app` bundle ships a built-in completion-sound row (`ui-completion-s
 ## Features
 
 - **Completion chime**: a WebAudio-synthesized two-tone chime (E5 → A5) when a turn finishes
+- **Answer-needed alert**: when an `ask_user_question`, plan-review, or approval card waits for you, a rising three-note cue (D5 → A5 → D6) plays and a notification is raised — its own switch, independent of the completion cues
 - **Long-task special music**: plays special music and shows a modal when a long task finishes; click anywhere to stop
 - **Custom special music**: point at a single audio file, or a directory (one random track is picked per play)
 - **Bundled audio**: defaults to the bundled "Guan Yu's Song" (`assets/guan-yu.wav`, ~13.5 MB)
@@ -54,6 +55,7 @@ The `dsh-web-app` bundle ships a built-in completion-sound row (`ui-completion-s
 | `longTaskMinutes` | long-task threshold (minutes) | `10` | 1–10080 |
 | `special` | play special music on long-task completion | `true` | — |
 | `specialPath` | special-music file/directory path (empty = bundled Guan Yu's Song) | `""` | — |
+| `askAlert` | alert when a card awaits your answer (chime + notification) | `true` | — |
 
 ## Special music semantics
 
@@ -79,7 +81,7 @@ completion-sound/
 │   ├── invariant.ts             # internal assertions (invariant companion)
 │   ├── css-modules.d.ts         # CSS Modules type declarations
 │   └── client/
-│       ├── index.ts             # Client half: settings binding + completion watch + page registration
+│       ├── index.ts             # Client half: settings binding + completion watch + answer-needed watch + page registration
 │       ├── CompletionSoundSection.tsx  # dedicated settings-page component
 │       ├── CompletionSoundSection.module.css
 │       ├── settings-store.ts    # settings store (defineStore)
@@ -110,7 +112,13 @@ This plugin is a **DSH bundle**: `package.json`'s `dsh.bundle.patch` points at `
   - `/completion-sound/guan-yu.wav` — bundled Guan Yu's Song (memory-cached, served as `audio/wav`)
   - `/completion-sound/special` — serves special music by `specialPath` (empty→bundled; file→served; directory→one random pick, with header `x-dsh-completion-sound-random: 1`)
   - `/completion-sound/notify` — POST system-notification fallback (macOS `osascript` / Linux `notify-send`) for when browser notifications are unavailable
-- **Client half** (`src/client/index.ts`): binds settings, watches turn-completion events, and registers the `settings.section` (id `completion-sound`) dedicated page.
+- **Client half** (`src/client/index.ts`): binds settings, watches turn-completion events, registers the `settings.section` (id `completion-sound`) dedicated page, and watches for cards waiting on you.
+  - The answer-needed watch: `ctx.uiSession.pendingInteractions` is DSH's single registry of "cards waiting on the user" (the question,
+plan-review and approval domains all publish into it), a snapshot source holding the one effective card per session. The plugin diffs both a
+newly appearing session and a session whose card was replaced by a newer request key; the first read only records, so reloading the page
+never re-alerts a card that was already open. It attaches via `ctx.inject(['uiSession'], …)`, so a profile without the Session UI degrades
+quietly and completion sounds keep working.
+  - Why a separate watch: while a card is open the turn is still `running`, so the completion watch never fires — "waiting for you" has to be picked up on its own.
 
 ## Building
 
@@ -130,6 +138,18 @@ Artifacts (`lib/`, committed):
 - `lib/types/**/*.d.ts` — type declarations
 
 `tsdown.config.ts` is self-contained (it inlines the platform module table, the CSS Modules inline plugin, and the `__ModuleLoader__` format); it depends on no monorepo preset.
+
+
+### Making local edits take effect
+
+Installed with `file:` (a local path), the plugin is **copied** into the profile, not symlinked, so refresh that copy after changing it:
+
+```bash
+pnpm run build                                   # rebuild lib/
+cd ~/.dsh/profiles/<profile> && pnpm install --force   # refresh the profile's copy
+```
+
+Then **restart dsh and reload the browser page**: the Host half needs a restart to register a newly added setting field, and the Client half needs a page reload to re-fetch the bundle. (Reloading without a Host restart still works — a field the older Host doesn't serve falls back to its default.)
 
 ## Dependencies
 

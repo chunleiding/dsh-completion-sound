@@ -1,7 +1,7 @@
 {
   "name": "@jensentsts/dsh-completion-sound",
-  "description": "DSH completion-sound bundle: a WebAudio chime plus optional long-task music (bundled \"guan-yu\" sample or a user-selected file/directory) and a cross-platform desktop notification when an agent turn finishes",
-  "version": "0.2.0",
+  "description": "DSH completion-sound bundle: a WebAudio chime plus optional long-task music (bundled \"guan-yu\" sample or a user-selected file/directory) and a cross-platform desktop notification when an agent turn finishes; plus a distinct attention cue when a question, plan-review or approval card awaits the user",
+  "version": "0.3.0",
   "publishConfig": {
     "access": "public"
   },
@@ -44,6 +44,7 @@
         "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-client-connection",
         "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-session",
         "@deepseek-ai/dsh-client-ui-settings"
       ],
       "platform": "web"
@@ -73,6 +74,7 @@
     "@deepseek-ai/dsh-client-store": "^0.1.5-rc.1",
     "@deepseek-ai/dsh-client-ui-primitives": "^0.1.5-rc.1",
     "@deepseek-ai/dsh-client-ui-renderer": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-session": "^0.1.5-rc.1",
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.5-rc.1",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.5-rc.1",
     "@deepseek-ai/dsh-invariants": "^0.1.5-rc.1"
@@ -86,6 +88,7 @@
     "@deepseek-ai/dsh-client-store": "^0.1.5-rc.1",
     "@deepseek-ai/dsh-client-ui-primitives": "^0.1.5-rc.1",
     "@deepseek-ai/dsh-client-ui-renderer": "^0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-session": "^0.1.5-rc.1",
     "@deepseek-ai/dsh-client-ui-settings": "^0.1.5-rc.1",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.5-rc.1",
     "@deepseek-ai/dsh-host-webserver": "^0.1.0-rc.6",

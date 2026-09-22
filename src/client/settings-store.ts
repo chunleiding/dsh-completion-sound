@@ -21,6 +21,8 @@ export interface CompletionSoundSectionState {
   special: boolean
   /** User-selected special-cue file/directory path ('' = bundled). */
   specialPath: string
+  /** Raise the answer-needed alert (attention chime + desktop notification). */
+  askAlert: boolean
   /** A value has been published (defaults or adopted durable section). */
   ready: boolean
   /** Monotonic guard: drops stale publishes and duplicate adoptions. */
@@ -45,6 +47,7 @@ export function createCompletionSoundSectionStore(): EngineStoreHandle<Completio
       longTaskMinutes: DEFAULT_LONG_TASK_MINUTES,
       special: true,
       specialPath: '',
+      askAlert: true,
       ready: false,
       revision: -1,
     }),
@@ -57,6 +60,7 @@ export function createCompletionSoundSectionStore(): EngineStoreHandle<Completio
         d.longTaskMinutes = settings.longTaskMinutes
         d.special = settings.special
         d.specialPath = settings.specialPath
+        d.askAlert = settings.askAlert
         d.ready = true
         d.revision = revision
       },

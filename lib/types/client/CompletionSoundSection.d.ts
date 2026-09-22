@@ -15,8 +15,12 @@ export interface CompletionSoundSectionInjected {
     setSpecial: (value: boolean) => void;
     /** Set the special-cue file/directory path ('' = bundled). */
     setSpecialPath: (value: string) => void;
+    /** Toggle the answer-needed alert (attention chime + notification). */
+    setAskAlert: (value: boolean) => void;
     /** Preview the short chime at the given gain. */
     previewChime: (volume: number) => void;
+    /** Preview the answer-needed alert chime at the given gain. */
+    previewAsk: (volume: number) => void;
     /** Preview the special cue at the given gain (mounts a stop overlay). */
     previewSpecial: (volume: number, specialPath: string) => void;
     /** Fire a sample desktop notification, resolving to the permission outcome. */

@@ -26,6 +26,9 @@ export const COMPLETION_SOUND_SPECIAL_FIELD = 'special'
 /** Field carrying the user-selected special-cue file/directory path ('' = bundled). */
 export const COMPLETION_SOUND_SPECIAL_PATH_FIELD = 'specialPath'
 
+/** Field carrying the answer-needed alert switch. */
+export const COMPLETION_SOUND_ASK_ALERT_FIELD = 'askAlert'
+
 /** Default playback gain (0..1) when the user-settings document has no override. */
 export const DEFAULT_VOLUME = 0.5
 
@@ -70,4 +73,6 @@ export interface CompletionSoundSettings {
   special: boolean
   /** File or directory path for the special music; '' selects the bundled sample. */
   specialPath: string
+  /** Raise an alert (attention chime + desktop notification) when a card awaits an answer. */
+  askAlert: boolean
 }

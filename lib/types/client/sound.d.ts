@@ -9,6 +9,11 @@ export declare function unlockAudio(): void;
  */
 export declare function playCompletionChime(volume: number): Promise<void>;
 /**
+ * Play the answer-needed cue (a card is waiting for the user).
+ * @param volume - playback gain, 0..1; values ≤ 0 are silently skipped.
+ */
+export declare function playAttentionChime(volume: number): Promise<void>;
+/**
  * Stop the special cue immediately (no-op when it is not playing). Also
  * cancels any in-flight load that would otherwise start after the stop.
  */

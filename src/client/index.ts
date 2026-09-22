@@ -21,6 +21,9 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: pulls the session controller's Context merge (ctx.sessions).
 import type {} from '@deepseek-ai/dsh-api-session-controller/client'
+// Type-only: pulls the Session UI's Context merge (ctx.uiSession), whose
+// pendingInteractions source is the roster of cards waiting on the user.
+import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import {
   COMPLETION_SOUND_SETTINGS_NAMESPACE, DEFAULT_LONG_TASK_MINUTES,
   type CompletionSoundSettings,
@@ -30,7 +33,9 @@ import { CompletionSoundSection } from './CompletionSoundSection.tsx'
 import { createCompletionSoundSectionStore } from './settings-store.ts'
 import { en, zh, NS, type CompletionSoundKey } from './locales.ts'
 import { notifyCompletion, requestNotificationPermission, testNotification } from './notify.ts'
-import { playCompletionChime, playSpecialSound, stopSpecialSound, unlockAudio } from './sound.ts'
+import {
+  playAttentionChime, playCompletionChime, playSpecialSound, stopSpecialSound, unlockAudio,
+} from './sound.ts'
 import { closeStopModal, showStopModal } from './stop-modal.tsx'
 import { SingleTabCoordinator } from './single-tab.ts'
 
@@ -60,6 +65,7 @@ const DEFAULT_SETTINGS: CompletionSoundSettings = Object.freeze({
   longTaskMinutes: DEFAULT_LONG_TASK_MINUTES,
   special: true,
   specialPath: '',
+  askAlert: true,
 })
 
 /** Turn duration (ms) that earns the long-task cue instead of the short chime. */
@@ -69,7 +75,8 @@ function longTaskMs(settings: CompletionSoundSettings): number {
 
 /**
  * Client plugin body: register the section, prime audio on the first gesture,
- * and watch the sessions list for running → idle transitions.
+ * watch the sessions list for running → idle transitions, and watch the Session
+ * pending-interaction source for cards that need an answer.
  * @param ctx - client cordis context.
  */
 export function apply(ctx: ClientContext): void {
@@ -137,7 +144,11 @@ export function apply(ctx: ClientContext): void {
     const value = scope.getSnapshot().value
     if (value === undefined) return
     revision += 1
-    settings = value
+    // Spread over the defaults rather than replacing wholesale: a Host half that
+    // predates a newer field (browser refreshed, host not restarted) hands back
+    // an object missing it, and a bare replace would turn that field's
+    // `undefined` into a silently dead switch.
+    settings = { ...DEFAULT_SETTINGS, ...value }
     publish()
   }
   ctx.effect(() => scope.subscribe(adopt), 'ui-completion-sound: settings scope adoption')
@@ -186,6 +197,47 @@ export function apply(ctx: ClientContext): void {
     if (settings.notify) void notifyCompletion(t('completion-sound.notified'), title)
   }), 'ui-completion-sound: sessions completion watch')
 
+  // Answer-needed watch: `ask_user_question`, a plan review, or an approval
+  // prompt blocks the turn until the user answers, and the session stays
+  // `running` the whole time — so the completion watch above is silent for it.
+  // The Session pending-interaction source is the roster of exactly those cards
+  // (one effective entry per session), so diff it by request key: a session
+  // appearing, or one whose key changed, is a fresh card. Seeded from the
+  // current snapshot so a card already on screen across a page or plugin
+  // reload does not cue twice. Read through an optional inject: a profile
+  // without the Session UI keeps the completion cue and only loses this one.
+  ctx.inject(['uiSession'], (sessionCtx) => {
+    // Session id → the request key last observed for it.
+    let seen = new Map<string, string>()
+    const prime = (): Map<string, string> => {
+      const next = new Map<string, string>()
+      for (const [id, interaction] of sessionCtx.uiSession.pendingInteractions.getSnapshot()) {
+        next.set(id, interaction.key)
+      }
+      return next
+    }
+    seen = prime()
+    sessionCtx.effect(() => sessionCtx.uiSession.pendingInteractions.subscribe(() => {
+      const previous = seen
+      seen = prime()
+      const list = ctx.sessions.list.getSnapshot()
+      const arrivals: { title: string, approving: boolean }[] = []
+      for (const [id, interaction] of sessionCtx.uiSession.pendingInteractions.getSnapshot()) {
+        if (previous.get(id) === interaction.key) continue
+        arrivals.push({ title: list.byId[id]?.displayTitle ?? id, approving: interaction.kind === 'approval' })
+      }
+      if (arrivals.length === 0 || !settings.askAlert) return
+      // Same leader election as the completion cue: one alert per card, not one
+      // per open DSH page.
+      if (!coordinator.isLeader()) return
+      void playAttentionChime(settings.volume)
+      const title = arrivals.map(a => a.title).join(', ')
+      void notifyCompletion(t(arrivals.some(a => a.approving)
+        ? 'completion-sound.askedApproval'
+        : 'completion-sound.asked'), title)
+    }), 'ui-completion-sound: answer-needed watch')
+  })
+
   // Settings section. The injected face drives the store through the optimistic
   // `write`/`publish` path; the store is re-primed on registration so no local
   // change is lost between service construction and first render.
@@ -202,7 +254,12 @@ export function apply(ctx: ClientContext): void {
       setLongTaskMinutes: (value) => { write('longTaskMinutes', value) },
       setSpecial: (value) => { write('special', value) },
       setSpecialPath: (value) => { write('specialPath', value) },
+      setAskAlert: (value) => {
+        if (value) requestNotificationPermission()
+        write('askAlert', value)
+      },
       previewChime: (volume) => { void playCompletionChime(volume) },
+      previewAsk: (volume) => { void playAttentionChime(volume) },
       previewSpecial: (volume, specialPath) => { playSpecialWithStop(volume, specialPath) },
       testNotify: () => testNotification(t('completion-sound.notified'), t('completion-sound.notifyTestBody')),
     }

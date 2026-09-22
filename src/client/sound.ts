@@ -33,26 +33,37 @@ export function unlockAudio(): void {
   context()
 }
 
+/** One synthesized cue note: frequency in Hz and its start offset in seconds. */
+type CueNote = readonly [frequency: number, offset: number]
+
+/** The completion chime: a soft rising E5 → A5. */
+const CHIME_NOTES: readonly CueNote[] = [[659.25, 0], [880, 0.15]]
+
 /**
- * Play the completion chime (E5 → A5, gentle attack and exponential decay).
- * @param volume - playback gain, 0..1; values ≤ 0 are silently skipped.
+ * The answer-needed cue: three short rising notes (D5 → A5 → D6). Distinct
+ * enough from the completion chime to read as "I need you", not "I am done".
  */
-export async function playCompletionChime(volume: number): Promise<void> {
+const ATTENTION_NOTES: readonly CueNote[] = [[587.33, 0], [880, 0.12], [1174.66, 0.24]]
+
+/**
+ * Schedule one sine cue: each note gets a fast attack and an exponential
+ * decay. Audio trouble (autoplay denied, no output device) degrades silently —
+ * a missing cue must never break the completion path.
+ * @param volume - playback gain, 0..1; values ≤ 0 are silently skipped.
+ * @param notes - the cue's notes, in play order.
+ * @param decay - per-note decay in seconds.
+ */
+async function playCue(volume: number, notes: readonly CueNote[], decay = 0.4): Promise<void> {
   if (volume <= 0) return
   try {
     const ctx = context()
     if (ctx.state === 'suspended') await ctx.resume()
     const peak = Math.min(1, Math.max(0, volume))
     const start = ctx.currentTime
-    const notes: readonly [frequency: number, offset: number][] = [
-      [659.25, 0],
-      [880, 0.15],
-    ]
     for (const [frequency, offset] of notes) {
       const oscillator = ctx.createOscillator()
       const gain = ctx.createGain()
       const when = start + offset
-      const decay = 0.4
       oscillator.type = 'sine'
       oscillator.frequency.value = frequency
       gain.gain.setValueAtTime(0.0001, when)
@@ -64,8 +75,24 @@ export async function playCompletionChime(volume: number): Promise<void> {
       oscillator.stop(when + decay + 0.05)
     }
   } catch {
-    // Audio unavailable (autoplay denied, no output device): degrade silently.
+    // Audio unavailable: degrade silently.
   }
+}
+
+/**
+ * Play the completion chime (E5 → A5, gentle attack and exponential decay).
+ * @param volume - playback gain, 0..1; values ≤ 0 are silently skipped.
+ */
+export function playCompletionChime(volume: number): Promise<void> {
+  return playCue(volume, CHIME_NOTES)
+}
+
+/**
+ * Play the answer-needed cue (a card is waiting for the user).
+ * @param volume - playback gain, 0..1; values ≤ 0 are silently skipped.
+ */
+export function playAttentionChime(volume: number): Promise<void> {
+  return playCue(volume, ATTENTION_NOTES, 0.3)
 }
 
 /** Decoded bundled sample, cached after the first successful load. */

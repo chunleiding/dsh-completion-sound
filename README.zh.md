@@ -1,8 +1,8 @@
 # dsh-completion-sound
 
-DSH（DeepSeek Harness）完成提示音插件（bundle）：agent 回合完成时播放提示音；长任务（默认 ≥ 10 分钟）完成时播放「关羽之歌」特殊音乐并弹出可点击停止的模态框；可选触发桌面通知（浏览器通知优先，不可用时自动回退系统通知）。
+DSH（DeepSeek Harness）完成提示音插件（bundle）：agent 回合完成时播放提示音；长任务（默认 ≥ 10 分钟）完成时播放「关羽之歌」特殊音乐并弹出可点击停止的模态框；可选触发桌面通知（浏览器通知优先，不可用时自动回退系统通知）；提问 / 计划确认 / 权限审批卡片等待回答时，另有一声「需要你来」的提醒。
 
-> 包名：`@jensentsts/dsh-completion-sound` · 版本：`0.1.0` · License：MIT
+> 包名：`@jensentsts/dsh-completion-sound` · 版本：`0.3.0` · License：MIT
 
 [English](README.md) | [中文](README.zh.md)
 
@@ -36,6 +36,7 @@ dsh plugin --profile web remove @jensentsts/dsh-completion-sound
 ## 功能特性
 
 - **完成提示音**：回合完成时播放 WebAudio 合成的双音提示音（E5 → A5）
+- **等待回答提醒**：`ask_user_question` 提问卡片、计划确认卡片或权限审批卡片等你回答时，播放上行三音提醒（D5 → A5 → D6）并弹出通知——独立开关，与完成提示互不影响
 - **长任务特殊音乐**：长任务完成时播放特殊音乐，并弹出模态框，点击任意处停止
 - **自定义特殊音乐**：可指定单个音频文件，或指定一个目录（每次随机播放其中一首）
 - **内置音频**：默认使用内置的「关羽之歌」（`assets/guan-yu.wav`，约 13.5 MB）
@@ -54,6 +55,7 @@ dsh plugin --profile web remove @jensentsts/dsh-completion-sound
 | `longTaskMinutes` | 长任务时长阈值（分钟） | `10` | 1–10080 |
 | `special` | 长任务完成时播放特殊音乐 | `true` | — |
 | `specialPath` | 特殊音乐文件/目录路径（空 = 内置关羽之歌） | `""` | — |
+| `askAlert` | 卡片等待回答时提醒（提示音 + 通知） | `true` | — |
 
 ## 特殊音乐语义
 
@@ -79,7 +81,7 @@ completion-sound/
 │   ├── invariant.ts             # 内部断言（invariant companion）
 │   ├── css-modules.d.ts         # CSS Modules 类型声明
 │   └── client/
-│       ├── index.ts             # Client 半边：设置绑定 + 完成监听 + 设置页注册
+│       ├── index.ts             # Client 半边：设置绑定 + 完成监听 + 等待回答监听 + 设置页注册
 │       ├── CompletionSoundSection.tsx  # 独立设置页组件
 │       ├── CompletionSoundSection.module.css
 │       ├── settings-store.ts    # 设置 store（defineStore）
@@ -110,7 +112,11 @@ completion-sound/
   - `/completion-sound/guan-yu.wav` — 内置关羽之歌（内存缓存后以 `audio/wav` 输出）
   - `/completion-sound/special` — 按 `specialPath` 服务特殊音乐（空→内置；文件→serve；目录→随机选一首，响应头带 `x-dsh-completion-sound-random: 1`）
   - `/completion-sound/notify` — POST 系统通知兜底（macOS `osascript` / Linux `notify-send`），浏览器通知不可用时的跨平台降级
-- **Client 半边**（`src/client/index.ts`）：绑定设置、监听回合完成事件，在「设置」中注册 `settings.section`（id `completion-sound`）独立页。
+- **Client 半边**（`src/client/index.ts`）：绑定设置、监听回合完成事件，在「设置」中注册 `settings.section`（id `completion-sound`）独立页，并监听「等待回答」的卡片。
+  - 等待回答监听：`ctx.uiSession.pendingInteractions` 是 DSH 客户端里「正在等用户的卡片」的唯一登记处（提问 / 计划确认 / 审批三个域都往这里登记），
+按 sessionId 保存当前生效的那一张卡。插件对它做两种差分：某会话新出现、或某会话换了一张新卡（请求 key 变了）；首次读取只记录不响铃，
+所以刷新页面不会为一张本来就开着的卡重复提醒。监听经 `ctx.inject(['uiSession'], …)` 挂载，宿主 profile 没有 Session UI 时静默降级，完成提示音不受影响。
+  - 为什么需要单独监听：卡片挂起时 agent 回合仍在 `running`，完成监听永远不会触发，所以「等你回答」必须自己接。
 
 ## 构建
 
@@ -130,6 +136,18 @@ pnpm run typecheck  # tsc -p tsconfig.json --noEmit
 - `lib/types/**/*.d.ts` — 类型声明
 
 `tsdown.config.ts` 是自包含的（内联了平台模块表、CSS Modules 内联插件与 `__ModuleLoader__` 装载格式），不依赖任何 monorepo 预设。
+
+
+### 让本地改动生效
+
+用 `file:`（本地路径）方式装进 profile 时，安装是**复制**而非软链，所以改完要刷新那份副本：
+
+```bash
+pnpm run build                                   # 重新产出 lib/
+cd ~/.dsh/profiles/<profile> && pnpm install --force   # 刷新 profile 里的副本
+```
+
+然后**重启 dsh 并刷新浏览器页面**：Host 半边要重启才会注册新增的设置字段，Client 半边要刷新页面才会重新加载 bundle。（只刷新页面而不重启 Host 也不会报错——新字段会按默认值补齐。）
 
 ## 依赖说明
 
