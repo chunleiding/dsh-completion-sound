@@ -4,7 +4,7 @@ DSH（DeepSeek Harness）完成提示音插件（bundle）：agent 回合完成�
 
 > 包名：`@jensentsts/dsh-completion-sound` · 版本：`0.5.0` · License：MIT
 >
-> 需要 DSH `>=0.1.7-alpha.1`。DSH `0.1.5`–`0.1.6` 请使用 `0.4.0` 版本。
+> 需要 DSH `>=0.1.7-alpha.1`。
 
 [English](README.md) | [中文](README.zh.md)
 

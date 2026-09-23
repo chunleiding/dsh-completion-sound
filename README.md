@@ -4,7 +4,7 @@ A DSH (DeepSeek Harness) completion-sound bundle: plays a chime when an agent tu
 
 > Package: `@jensentsts/dsh-completion-sound` · Version: `0.5.0` · License: MIT
 >
-> Requires DSH `>=0.1.7-alpha.1`. For DSH `0.1.5`–`0.1.6`, use release `0.4.0`.
+> Requires DSH `>=0.1.7-alpha.1`.
 
 [English](README.md) | [中文](README.zh.md)
 
